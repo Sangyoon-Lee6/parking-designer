@@ -130,79 +130,334 @@ export function occupancyRamps(ramps, plate, lowerMode = "alternate") {
   return ground.concat(ground.map((r) => lowerFloorRamp(r, plate, "alternate")).filter(Boolean));
 }
 
-/** 원형(나선) 램프 한 층분. */
+/**
+ * 외곽 회전 램프(한 층분): 주차장 외벽에 붙어 변을 따라가다 모서리에서 내변≥6m로 꺾으며 내려간다.
+ * (가운데 원형 우물이 아님 — 차가 가장자리를 돌며 층고를 내려감)
+ */
 export function spiralRampShape(ramp, plate) {
   const H = floorHeightOf(plate);
   const tr = rampTransitions(plate, ramp.level === "lower" ? "lower" : "ground");
   const Ri = innerCurveRadius(plate);
   const W = Math.max(RAMP_CURVE_W, ramp.width || RAMP_CURVE_W);
-  const R = Ri + W / 2;
-  const need = minCurvePathLength(H, tr);
-  const theta = need / R;
-  const turns = theta / (Math.PI * 2);
-  const turnSgn = ramp.turn < 0 ? -1 : 1;
-
-  const along = ramp.edge === "n" || ramp.edge === "s" ? plate.width : plate.depth;
-  const across = ramp.edge === "n" || ramp.edge === "s" ? plate.depth : plate.width;
-  const margin = Ri + W + 1;
-  const t = clamp(ramp.t || along / 2, margin, Math.max(margin, along - margin));
-  let cx;
-  let cy;
-  if (ramp.edge === "s") { cx = t; cy = margin; }
-  else if (ramp.edge === "n") { cx = t; cy = plate.depth - margin; }
-  else if (ramp.edge === "w") { cx = margin; cy = t; }
-  else { cx = plate.width - margin; cy = t; }
+  const Rc = Ri + W / 2;
+  const Ww = plate.width;
+  const Dd = plate.depth;
 
   let reason = "";
-  if (across < 2 * (Ri + W) + AISLE || along < 2 * (Ri + W) + AISLE) {
-    reason = "평면이 작아 원형 램프(내변 6m·폭 6.5m)를 둘 수 없습니다";
+  if (Ww < 2 * (W + Ri) + AISLE || Dd < 2 * (W + Ri) + AISLE) {
+    reason = "평면이 작아 외곽 회전 램프(내변 6m·폭 6.5m)를 둘 수 없습니다";
   }
 
-  const a0 = ramp.edge === "s" || ramp.edge === "w" ? Math.PI / 2 : -Math.PI / 2;
-  const steps = Math.max(24, Math.ceil(theta / (Math.PI / 12)));
+  // 진행 방향: 진입 변에서 t가 작은 쪽 모서리로 가며 시계/반시계로 외곽을 돈다.
+  const startEdge = ramp.edge || "w";
+  const along0 = startEdge === "n" || startEdge === "s" ? Ww : Dd;
+  const t0 = clamp(Number(ramp.t) || along0 / 2, W + Ri, Math.max(W + Ri, along0 - (W + Ri)));
+  const towardLow = t0 <= along0 / 2;
+  // 외곽을 따라 도는 변 순서 (차 진행).
+  const cw = { w: ["w", "s", "e", "n"], s: ["s", "e", "n", "w"], e: ["e", "n", "w", "s"], n: ["n", "w", "s", "e"] };
+  const ccw = { w: ["w", "n", "e", "s"], s: ["s", "w", "n", "e"], e: ["e", "s", "w", "n"], n: ["n", "e", "s", "w"] };
+  // west+towardLow → 남쪽(작은 y)으로 = cw의 w→s. west+!towardLow → 북쪽 = ccw.
+  const useCw = (startEdge === "w" && towardLow) || (startEdge === "e" && !towardLow)
+    || (startEdge === "s" && !towardLow) || (startEdge === "n" && towardLow);
+  const order = (useCw ? cw : ccw)[startEdge];
+
+  // 직선 구간 최대 경사 17%, 모서리 곡선 14%로 층고를 나눈다.
+  const needStraight = minStraightRampLengthLocal(H, tr);
+  const needCurve = minCurvePathLength(H, tr);
+  const targetLen = Math.max(needStraight, needCurve);
+
   const path = [];
-  const outer = [];
-  const inner = [];
-  for (let i = 0; i <= steps; i += 1) {
-    const u = i / steps;
-    const a = a0 + turnSgn * theta * u;
-    path.push({
-      x: round3(cx + R * Math.cos(a)),
-      y: round3(cy + R * Math.sin(a)),
-      s: round3(need * u),
-      h: round3(H * u),
-    });
-    outer.push({ x: round3(cx + (Ri + W) * Math.cos(a)), y: round3(cy + (Ri + W) * Math.sin(a)) });
-    inner.push({ x: round3(cx + Ri * Math.cos(a)), y: round3(cy + Ri * Math.sin(a)) });
-  }
-  const polygon = outer.concat(inner.slice().reverse());
+  const polygons = [];
+  const pieces = [];
+  const segments = [];
+  let sAcc = 0;
+  let hAcc = 0;
+  let done = false;
 
-  // 배치용 장애물: 우물 외접 사각형 하나(안에 주차·차로 금지). 부채꼴 AABB는 구멍이 생겨 칸이 새어 든다.
-  const footprint = {
-    x: round3(Math.max(0, cx - (Ri + W))),
-    y: round3(Math.max(0, cy - (Ri + W))),
-    w: round3(Math.min(plate.width, cx + (Ri + W)) - Math.max(0, cx - (Ri + W))),
-    d: round3(Math.min(plate.depth, cy + (Ri + W)) - Math.max(0, cy - (Ri + W))),
+  const pushPt = (x, y, ds, slope) => {
+    if (done) return;
+    const drop = Math.min(H - hAcc, ds * slope);
+    sAcc += ds;
+    hAcc += drop;
+    path.push({ x: round3(x), y: round3(y), s: round3(sAcc), h: round3(hAcc) });
+    if (hAcc >= H - 1e-6) done = true;
   };
-  const pieces = [footprint];
+
+  // 첫 점: 진입 변 위, 외벽에서 W/2 안쪽.
+  const start = edgePoint(startEdge, t0, W / 2, Ww, Dd);
+  path.push({ x: round3(start.x), y: round3(start.y), s: 0, h: 0 });
+
+  for (let ei = 0; ei < order.length * 2 && !done; ei += 1) {
+    const edge = order[ei % 4];
+    const next = order[(ei + 1) % 4];
+    const run = edgeRun(edge, startEdge, t0, ei === 0, W, Ri, Ww, Dd, useCw);
+    // 직선: 외벽 띠 중심선
+    const nSteps = Math.max(2, Math.ceil(run.len / 2));
+    let segDrop = 0;
+    let segLen = 0;
+    for (let i = 1; i <= nSteps && !done; i += 1) {
+      const u = i / nSteps;
+      const p = run.at(u);
+      const prev = path[path.length - 1];
+      const ds = Math.hypot(p.x - prev.x, p.y - prev.y);
+      let slope = RAMP_SLOPE_STRAIGHT;
+      if (ei === 0 && sAcc < tr.top) slope = GENTLE_SLOPE;
+      else if (H - hAcc <= tr.bottom * GENTLE_SLOPE + 1e-6) slope = GENTLE_SLOPE;
+      pushPt(p.x, p.y, ds, slope);
+      segLen += ds;
+      segDrop += ds * slope;
+    }
+    if (segLen > 0.05) {
+      segments.push({
+        name: `${edgeLabelKo(edge)}측 외곽`,
+        length: round1(segLen),
+        drop: round3(Math.min(segDrop, H)),
+        slope: round3(segLen ? Math.min(segDrop, H) / segLen : 0),
+      });
+      // 실제 달린 구간만 장애물·윤곽으로 (변 전체를 막지 않음)
+      pieces.push(pathSpanBox(path, path.length - nSteps - 1, path.length - 1, W));
+      polygons.push(edgeBandPoly(edge, run, W, Ww, Dd));
+    }
+    if (done) break;
+
+    // 모서리 90° (내변 Ri)
+    const corner = cornerTurn(edge, next, W, Ri, Rc, Ww, Dd, useCw);
+    const arcSteps = 12;
+    const arcStartIdx = path.length - 1;
+    let arcLen = 0;
+    let arcDrop = 0;
+    for (let i = 1; i <= arcSteps && !done; i += 1) {
+      const u = i / arcSteps;
+      const a = corner.a0 + (corner.a1 - corner.a0) * u;
+      const x = corner.cx + Rc * Math.cos(a);
+      const y = corner.cy + Rc * Math.sin(a);
+      const prev = path[path.length - 1];
+      const ds = Math.hypot(x - prev.x, y - prev.y);
+      pushPt(x, y, ds, RAMP_SLOPE_CURVE);
+      arcLen += ds;
+      arcDrop += ds * RAMP_SLOPE_CURVE;
+    }
+    if (arcLen > 0.05) {
+      segments.push({
+        name: "모서리 곡선",
+        length: round1(arcLen),
+        drop: round3(Math.min(arcDrop, H)),
+        slope: round3(arcLen ? Math.min(arcDrop, H) / arcLen : 0),
+      });
+      pieces.push(...corner.pieces);
+      pieces.push(pathSpanBox(path, arcStartIdx, path.length - 1, W));
+      polygons.push(corner.poly);
+    }
+    if (sAcc >= targetLen * 3 && hAcc < H - 0.05) {
+      reason = reason || "외곽 경로가 너무 길어 경사를 맞추지 못했습니다";
+      break;
+    }
+  }
+
+  if (hAcc < H - 0.05 && !reason) {
+    reason = "외곽 경로로 층고를 다 내려가지 못했습니다(평면이 너무 작음)";
+  }
+
+  // 전체 AABB
+  const xs = path.map((p) => p.x);
+  const ys = path.map((p) => p.y);
+  const pad = W / 2 + 0.2;
+  const footprint = {
+    x: round3(Math.min(...xs) - pad),
+    y: round3(Math.min(...ys) - pad),
+    w: round3(Math.max(...xs) - Math.min(...xs) + 2 * pad),
+    d: round3(Math.max(...ys) - Math.min(...ys) + 2 * pad),
+  };
+
+  // 도착 쪽: 마지막 변 안쪽으로 차로와 닿는 띠
+  const lastEdge = order[Math.min(order.length - 1, Math.floor((path.length) / 8)) % 4];
+  const lip = edgeInnerLip(lastEdge, W, Ww, Dd);
 
   return {
     kind: "spiral",
     ok: !reason,
     reason,
-    pieces,
-    polygons: [polygon],
+    pieces: pieces.length ? pieces : [footprint],
+    polygons: polygons.length ? polygons : [rectPolyLocal(footprint)],
     path,
-    segments: [{ name: "원형(나선)", length: round1(need), drop: round3(H), slope: round3(H / need) }],
-    total: round1(need),
-    approach: null,
-    lip: null,
-    center: { x: cx, y: cy },
+    segments,
+    total: round1(sAcc),
+    approach: lip,
+    lip,
     Ri,
     width: W,
-    turns: round3(turns),
+    turns: round3(sAcc / (2 * Math.PI * Rc)),
     footprint,
+    perimeter: true,
   };
+}
+
+function edgeLabelKo(edge) {
+  return { n: "북", s: "남", w: "서", e: "동" }[edge] || edge;
+}
+
+function rectPolyLocal(r) {
+  return [
+    { x: r.x, y: r.y },
+    { x: r.x + r.w, y: r.y },
+    { x: r.x + r.w, y: r.y + r.d },
+    { x: r.x, y: r.y + r.d },
+  ];
+}
+
+/** 외벽에서 inset 안쪽 중심선 좌표. */
+function edgePoint(edge, t, inset, Ww, Dd) {
+  if (edge === "w") return { x: inset, y: t };
+  if (edge === "e") return { x: Ww - inset, y: t };
+  if (edge === "s") return { x: t, y: inset };
+  return { x: t, y: Dd - inset };
+}
+
+/** 한 변을 따라 달리는 직선 구간 (모서리 곡선 직전까지만). */
+function edgeRun(edge, startEdge, t0, isFirst, W, Ri, Ww, Dd, useCw) {
+  const inset = W / 2;
+  const cornerClear = W + Ri; // 모서리 곡선 시작 전
+  let from;
+  let to;
+  if (edge === "w") {
+    if (isFirst && startEdge === "w") {
+      from = t0;
+      to = useCw ? cornerClear : Dd - cornerClear;
+    } else {
+      from = useCw ? Dd - cornerClear : cornerClear;
+      to = useCw ? cornerClear : Dd - cornerClear;
+    }
+    const len = Math.abs(to - from);
+    return {
+      len,
+      at: (u) => ({ x: inset, y: from + (to - from) * u }),
+    };
+  }
+  if (edge === "e") {
+    if (isFirst && startEdge === "e") {
+      from = t0;
+      to = useCw ? Dd - cornerClear : cornerClear;
+    } else {
+      from = useCw ? cornerClear : Dd - cornerClear;
+      to = useCw ? Dd - cornerClear : cornerClear;
+    }
+    const len = Math.abs(to - from);
+    return {
+      len,
+      at: (u) => ({ x: Ww - inset, y: from + (to - from) * u }),
+    };
+  }
+  if (edge === "s") {
+    if (isFirst && startEdge === "s") {
+      from = t0;
+      to = useCw ? Ww - cornerClear : cornerClear;
+    } else {
+      from = useCw ? cornerClear : Ww - cornerClear;
+      to = useCw ? Ww - cornerClear : cornerClear;
+    }
+    const len = Math.abs(to - from);
+    return {
+      len,
+      at: (u) => ({ x: from + (to - from) * u, y: inset }),
+    };
+  }
+  // n
+  if (isFirst && startEdge === "n") {
+    from = t0;
+    to = useCw ? cornerClear : Ww - cornerClear;
+  } else {
+    from = useCw ? Ww - cornerClear : cornerClear;
+    to = useCw ? cornerClear : Ww - cornerClear;
+  }
+  const len = Math.abs(to - from);
+  return {
+    len,
+    at: (u) => ({ x: from + (to - from) * u, y: Dd - inset }),
+  };
+}
+
+function pathSpanBox(path, i0, i1, W) {
+  const slice = path.slice(Math.max(0, i0), Math.max(i0 + 1, i1 + 1));
+  if (!slice.length) return { x: 0, y: 0, w: W, d: W };
+  const xs = slice.map((p) => p.x);
+  const ys = slice.map((p) => p.y);
+  const pad = W / 2;
+  const x0 = Math.min(...xs) - pad;
+  const y0 = Math.min(...ys) - pad;
+  return {
+    x: round3(x0),
+    y: round3(y0),
+    w: round3(Math.max(...xs) - Math.min(...xs) + W),
+    d: round3(Math.max(...ys) - Math.min(...ys) + W),
+  };
+}
+
+/** 달린 직선 구간의 램프 띠 폴리곤 (외벽~안쪽 W). */
+function edgeBandPoly(edge, run, W, Ww, Dd) {
+  const a = run.at(0);
+  const b = run.at(1);
+  if (edge === "w") {
+    const y0 = Math.min(a.y, b.y);
+    const y1 = Math.max(a.y, b.y);
+    return [{ x: 0, y: y0 }, { x: W, y: y0 }, { x: W, y: y1 }, { x: 0, y: y1 }];
+  }
+  if (edge === "e") {
+    const y0 = Math.min(a.y, b.y);
+    const y1 = Math.max(a.y, b.y);
+    return [{ x: Ww - W, y: y0 }, { x: Ww, y: y0 }, { x: Ww, y: y1 }, { x: Ww - W, y: y1 }];
+  }
+  if (edge === "s") {
+    const x0 = Math.min(a.x, b.x);
+    const x1 = Math.max(a.x, b.x);
+    return [{ x: x0, y: 0 }, { x: x1, y: 0 }, { x: x1, y: W }, { x: x0, y: W }];
+  }
+  const x0 = Math.min(a.x, b.x);
+  const x1 = Math.max(a.x, b.x);
+  return [{ x: x0, y: Dd - W }, { x: x1, y: Dd - W }, { x: x1, y: Dd }, { x: x0, y: Dd }];
+}
+
+function edgeInnerLip(edge, W, Ww, Dd) {
+  if (edge === "w") return { x: W - 0.2, y: Dd * 0.25, w: 1.2, d: Dd * 0.5 };
+  if (edge === "e") return { x: Ww - W - 1.0, y: Dd * 0.25, w: 1.2, d: Dd * 0.5 };
+  if (edge === "s") return { x: Ww * 0.25, y: W - 0.2, w: Ww * 0.5, d: 1.2 };
+  return { x: Ww * 0.25, y: Dd - W - 1.0, w: Ww * 0.5, d: 1.2 };
+}
+
+/** fromEdge → nextEdge 모서리 90° 곡선. */
+function cornerTurn(fromEdge, nextEdge, W, Ri, Rc, Ww, Dd, useCw) {
+  const key = `${fromEdge}${nextEdge}`;
+  // 중심 = 모서리에서 안쪽으로 (W/2 + 거리?) — 내변 Ri가 램프 안쪽 연석.
+  // 중심선 반경 Rc = Ri + W/2, 중심은 외곽 모서리에서 Rc만큼 안쪽 대각.
+  const centers = {
+    ws: { cx: Rc, cy: Rc, a0: Math.PI, a1: Math.PI * 1.5 },       // 서→남 (cw)
+    se: { cx: Ww - Rc, cy: Rc, a0: Math.PI * 1.5, a1: Math.PI * 2 }, // 남→동
+    en: { cx: Ww - Rc, cy: Dd - Rc, a0: 0, a1: Math.PI * 0.5 },     // 동→북
+    nw: { cx: Rc, cy: Dd - Rc, a0: Math.PI * 0.5, a1: Math.PI },    // 북→서
+    wn: { cx: Rc, cy: Dd - Rc, a0: Math.PI, a1: Math.PI * 0.5 },    // 서→북 (ccw)
+    ne: { cx: Ww - Rc, cy: Dd - Rc, a0: Math.PI * 0.5, a1: 0 },     // 북→동
+    es: { cx: Ww - Rc, cy: Rc, a0: 0, a1: -Math.PI * 0.5 },         // 동→남
+    sw: { cx: Rc, cy: Rc, a0: -Math.PI * 0.5, a1: -Math.PI },      // 남→서
+  };
+  const c = centers[key] || centers.ws;
+  const steps = 8;
+  const outer = [];
+  const inner = [];
+  for (let i = 0; i <= steps; i += 1) {
+    const a = c.a0 + (c.a1 - c.a0) * (i / steps);
+    outer.push({ x: round3(c.cx + (Ri + W) * Math.cos(a)), y: round3(c.cy + (Ri + W) * Math.sin(a)) });
+    inner.push({ x: round3(c.cx + Ri * Math.cos(a)), y: round3(c.cy + Ri * Math.sin(a)) });
+  }
+  const poly = outer.concat(inner.slice().reverse());
+  const xs = outer.concat(inner).map((p) => p.x);
+  const ys = outer.concat(inner).map((p) => p.y);
+  const piece = {
+    x: round3(Math.min(...xs)),
+    y: round3(Math.min(...ys)),
+    w: round3(Math.max(...xs) - Math.min(...xs)),
+    d: round3(Math.max(...ys) - Math.min(...ys)),
+  };
+  void useCw;
+  return { ...c, poly, pieces: [piece] };
 }
 
 /**

@@ -42,7 +42,10 @@ const big = {
 }
 {
   const s = rampShape({ id: 1, edge: "w", t: 32, width: 6.5, length: len, placement: "internal", form: "spiral" }, big);
-  ok("원형 나선 Ri≥6", s.kind === "spiral" && s.ok && s.Ri >= 6 && s.segments[0].slope <= 0.1401, `slope ${s.segments[0].slope}`);
+  const maxSlope = Math.max(...(s.segments || []).map((seg) => seg.slope || 0));
+  const onEdge = s.path && s.path.every((p) => p.x <= 8 || p.y <= 8 || p.x >= big.width - 8 || p.y >= big.depth - 8);
+  ok("외곽 회전 Ri≥6·가장자리", s.kind === "spiral" && s.ok && s.perimeter && s.Ri >= 6 && maxSlope <= 0.1701 && onEdge,
+    `slope ${maxSlope.toFixed(3)} pts ${s.path.length} h ${s.path.at(-1)?.h}`);
 }
 {
   const g = { id: 1, edge: "w", t: 30, width: 6, length: len, placement: "external", form: "auto" };
@@ -62,7 +65,7 @@ const big = {
     entranceMode: "integrated",
     rampForm: "spiral",
   });
-  ok("원형 통과안", vs.some((v) => v.metrics.valid), `${vs.filter((v) => v.metrics.valid).length}/${vs.length}`);
+  ok("외곽 회전 통과안", vs.some((v) => v.metrics.valid), `${vs.filter((v) => v.metrics.valid).length}/${vs.length}`);
 }
 {
   const small = { ...big, width: 48, depth: 42, rampForm: "auto" };

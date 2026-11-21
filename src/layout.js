@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=248";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=249";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,7 +6,7 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=248";
+} from "./rampForms.js?v=249";
 
 export {
   lowerFloorRamp,
@@ -14,7 +14,7 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=248";
+} from "./rampForms.js?v=249";
 
 /**
  * 주차장법 시행규칙 제3조·제6조. 확인 2026-11-08. law.go.kr
@@ -628,8 +628,10 @@ export function rampTopLip(ramp, plate) {
 }
 function rampTopLipRaw(ramp, plate) {
   if (rampFormOf(ramp, plate && plate.rampForm) === "spiral") {
-    const box = rampFootprint(ramp, plate);
-    // 우물 안쪽(평면 중심 쪽) 변에 진입 띠 — 순환 차로와 닿게.
+    const shape = spiralRampShape(ramp, plate);
+    if (shape.lip) return shape.lip;
+    const box = shape.footprint || rampFootprint(ramp, plate);
+    // 외곽 띠 안쪽(평면 중심 쪽)에 진입 띠.
     const cx = plate.width / 2;
     const cy = plate.depth / 2;
     const midX = box.x + box.w / 2;
@@ -638,16 +640,16 @@ function rampTopLipRaw(ramp, plate) {
       const right = cx > midX;
       return {
         x: right ? box.x + box.w - 0.2 : box.x - 1.0,
-        y: box.y + box.d * 0.2,
+        y: box.y + Math.max(0, box.d * 0.2),
         w: 1.2,
-        d: box.d * 0.6,
+        d: Math.max(6, box.d * 0.6),
       };
     }
     const up = cy > midY;
     return {
-      x: box.x + box.w * 0.2,
+      x: box.x + Math.max(0, box.w * 0.2),
       y: up ? box.y + box.d - 0.2 : box.y - 1.0,
-      w: box.w * 0.6,
+      w: Math.max(6, box.w * 0.6),
       d: 1.2,
     };
   }

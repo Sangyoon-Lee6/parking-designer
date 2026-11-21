@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=248" />
+    <link rel="stylesheet" href="styles.css?v=249" />
     <script type="importmap">
       {
         "imports": {
@@ -244,11 +244,11 @@
               <option value="auto">자동 (직선/90°)</option>
               <option value="straight">직선</option>
               <option value="curve90">90° 곡선</option>
-              <option value="spiral">원형(나선)</option>
+              <option value="spiral">외곽 회전 (가장자리)</option>
             </select>
           </label>
           <label>
-            지하 2층+ 경로 <span class="info" tabindex="0" title="지상→B1 램프와 달리, B1→B2 이하는 반대쪽 변 내부 램프로 내려가도록 그립니다. '전 층 동일'은 예전처럼 같은 XY를 반복합니다. 원형 램프는 같은 우물로 연속합니다.">ⓘ</span>
+            지하 2층+ 경로 <span class="info" tabindex="0" title="지상→B1 램프와 달리, B1→B2 이하는 반대쪽 변 내부 램프로 내려가도록 그립니다. '전 층 동일'은 예전처럼 같은 XY를 반복합니다. 외곽 회전 램프는 같은 가장자리 경로로 연속합니다.">ⓘ</span>
             <select id="lower-ramp-mode">
               <option value="alternate">다른 경로 (권장)</option>
               <option value="same">전 층 동일</option>
@@ -518,7 +518,7 @@
       </div>
     </main>
 
-    <script type="module" src="src/main.js?v=248"></script>
+    <script type="module" src="src/main.js?v=249"></script>
       <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>

@@ -1,11 +1,11 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=248";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=248";
-import { drawThumb, mountPlan } from "./plan.js?v=248";
-import { stallRuleTargets } from "./stallTypes.js?v=248";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=248";
-import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=248";
-import { bindContextDialog, closeContext, openContext } from "./context.js?v=248";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=248";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=249";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=249";
+import { drawThumb, mountPlan } from "./plan.js?v=249";
+import { stallRuleTargets } from "./stallTypes.js?v=249";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=249";
+import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=249";
+import { bindContextDialog, closeContext, openContext } from "./context.js?v=249";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=249";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -377,7 +377,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=248")
+    sceneMount = import("./scene.js?v=249")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -511,12 +511,12 @@ function render() {
   if (state.metrics && state.metrics.rampKind) {
     const ramp = state.ramps[0];
     const kind = state.metrics.rampKind;
-    const formLabel = state.rampForm === "spiral" || kind === "spiral" ? "원형(나선)"
+    const formLabel = state.rampForm === "spiral" || kind === "spiral" ? "외곽 회전"
       : kind === "curved" ? "직선+곡선 90°"
         : "직선";
     rows.push(["램프", `${formLabel} ${state.metrics.rampTotal || (ramp && ramp.length) || "—"}m`]);
     const lowerMode = state.lowerRampMode || "alternate";
-    rows.push(["지하 2층+ 경로", lowerMode === "same" ? "전 층 동일 XY" : (kind === "spiral" ? "같은 원형 우물" : "반대쪽 변 층간 램프")]);
+    rows.push(["지하 2층+ 경로", lowerMode === "same" ? "전 층 동일 XY" : (kind === "spiral" ? "같은 외곽 경로" : "반대쪽 변 층간 램프")]);
     if (kind === "straight" && Number.isFinite(state.metrics.rampLowerSlope)) {
       rows.push(["층간 본 경사", `${(state.metrics.rampLowerSlope * 100).toFixed(1)}% (도로변 3m 없음)`]);
     }
