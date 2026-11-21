@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=247" />
+    <link rel="stylesheet" href="styles.css?v=248" />
     <script type="importmap">
       {
         "imports": {
@@ -234,6 +234,24 @@
             <select id="entrance-mode">
               <option value="separate">분리</option>
               <option value="integrated">램프 일체형</option>
+            </select>
+          </label>
+        </div>
+        <div class="split">
+          <label>
+            램프 형태 <span class="info" tabindex="0" title="주차장법 시행규칙 제6조①5: 곡선 내변반경 6m 이상(50대 이하 5m), 곡선 2차로 6.5m, 직선 경사 17%·곡선 14%, 도로변 3m는 직선 8.5%·곡선 7%. 자동은 깊이에 따라 직선/90° 곡선을 고릅니다.">ⓘ</span>
+            <select id="ramp-form">
+              <option value="auto">자동 (직선/90°)</option>
+              <option value="straight">직선</option>
+              <option value="curve90">90° 곡선</option>
+              <option value="spiral">원형(나선)</option>
+            </select>
+          </label>
+          <label>
+            지하 2층+ 경로 <span class="info" tabindex="0" title="지상→B1 램프와 달리, B1→B2 이하는 반대쪽 변 내부 램프로 내려가도록 그립니다. '전 층 동일'은 예전처럼 같은 XY를 반복합니다. 원형 램프는 같은 우물로 연속합니다.">ⓘ</span>
+            <select id="lower-ramp-mode">
+              <option value="alternate">다른 경로 (권장)</option>
+              <option value="same">전 층 동일</option>
             </select>
           </label>
         </div>
@@ -500,7 +518,7 @@
       </div>
     </main>
 
-    <script type="module" src="src/main.js?v=247"></script>
+    <script type="module" src="src/main.js?v=248"></script>
       <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>

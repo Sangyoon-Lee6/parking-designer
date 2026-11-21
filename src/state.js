@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=247";
+import { calculateDemand, emptyDemand } from "./demand.js?v=248";
 import {
   basementCount,
   clampCore,
@@ -15,7 +15,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=247";
+} from "./layout.js?v=248";
 
 export const state = {
   step: 1,
@@ -51,6 +51,8 @@ export const state = {
   coreAuto: true,
   coreSearch: null,
   rampPlacement: "internal",
+  rampForm: "auto",
+  lowerRampMode: "alternate",
   entranceMode: "separate",
   circulation: "ccw",
   entranceWidth: 6,
@@ -122,6 +124,8 @@ export function plateFromState() {
     roadEdge: state.roadEdge || "w",
     rampPos: state.rampPos || "auto",
     rampPlacement: state.rampPlacement,
+    rampForm: state.rampForm || "auto",
+    lowerRampMode: state.lowerRampMode || "alternate",
     legalStalls: rules.legalStalls,
     stallRules: rules,
   };
@@ -321,9 +325,14 @@ function seedAccess() {
       width: state.rampWidth,
       length: defaultRampLength(state.plate, edge),
       placement: state.rampPlacement,
+      form: state.rampForm || "auto",
     }];
   } else {
-    state.ramps = state.ramps.map((ramp) => ({ ...ramp, placement: state.rampPlacement }));
+    state.ramps = state.ramps.map((ramp) => ({
+      ...ramp,
+      placement: state.rampPlacement,
+      form: state.rampForm || ramp.form || "auto",
+    }));
   }
 }
 

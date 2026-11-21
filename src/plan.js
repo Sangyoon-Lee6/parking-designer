@@ -1,5 +1,5 @@
-import { edgePoint, pickEdge, rampFootprint } from "./layout.js?v=247";
-import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=247";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=248";
+import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=248";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -110,16 +110,38 @@ export function mountPlan(canvas) {
     }
 
     const blockedRamps = new Set(state.issues.filter((issue) => issue.type === "ramp").map((issue) => issue.id));
-    state.ramps.forEach((ramp) => {
-      const footprint = rampFootprint(ramp, plate);
-      const selected = state.selection?.type === "ramp" && state.selection.id === ramp.id;
+    const groundDraw = rampsForLevel(state.ramps, plate, 0, "same");
+    const spiralOnly = groundDraw.every((r) => (r.form || state.rampForm) === "spiral");
+    const drawList = groundDraw.concat(
+      !spiralOnly && (state.lowerRampMode || "alternate") === "alternate"
+        ? rampsForLevel(state.ramps, plate, 1, "alternate").map((r) => ({ ...r, _lower: true }))
+        : [],
+    );
+    drawList.forEach((ramp) => {
+      const shape = rampShape(ramp, plate);
+      const footprint = shape.footprint || rampFootprint(ramp, plate);
+      const selected = !ramp._lower && state.selection?.type === "ramp" && state.selection.id === ramp.id;
       const blocked = blockedRamps.has(ramp.id);
-      ctx.fillStyle = blocked ? "rgba(180, 40, 32, 0.35)" : "rgba(168, 116, 42, 0.34)";
-      ctx.strokeStyle = blocked ? "#b42318" : selected ? "#1e1a16" : "#a8742a";
+      const lower = ramp._lower;
+      ctx.fillStyle = blocked ? "rgba(180, 40, 32, 0.35)" : (lower ? "rgba(61, 107, 79, 0.28)" : "rgba(168, 116, 42, 0.34)");
+      ctx.strokeStyle = blocked ? "#b42318" : selected ? "#1e1a16" : (lower ? "#3d6b4f" : "#a8742a");
       ctx.lineWidth = (blocked || selected ? 2.6 : 1.5) / camera.scale;
-      ctx.fillRect(footprint.x, footprint.y, footprint.w, footprint.d);
-      ctx.strokeRect(footprint.x, footprint.y, footprint.w, footprint.d);
-      label(ctx, "램프", footprint.x + footprint.w / 2, footprint.y + footprint.d / 2, "#7a5418");
+      ctx.setLineDash(lower ? [0.6, 0.4] : []);
+      if (shape.polygons && shape.polygons.length) {
+        shape.polygons.forEach((poly) => {
+          if (!poly || poly.length < 3) return;
+          ctx.beginPath();
+          poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        });
+      } else {
+        ctx.fillRect(footprint.x, footprint.y, footprint.w, footprint.d);
+        ctx.strokeRect(footprint.x, footprint.y, footprint.w, footprint.d);
+      }
+      ctx.setLineDash([]);
+      label(ctx, lower ? "층간 램프" : "램프", footprint.x + footprint.w / 2, footprint.y + footprint.d / 2, lower ? "#3d6b4f" : "#7a5418");
     });
 
     let stairNo = 0;

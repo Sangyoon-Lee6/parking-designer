@@ -1,4 +1,20 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=247";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=248";
+import {
+  externalCurve90Shape,
+  lowerFloorRamp,
+  occupancyRamps,
+  rampFormOf,
+  rampsForLevel,
+  spiralRampShape,
+} from "./rampForms.js?v=248";
+
+export {
+  lowerFloorRamp,
+  occupancyRamps,
+  rampFormOf,
+  rampsForLevel,
+  spiralRampShape,
+} from "./rampForms.js?v=248";
 
 /**
  * 주차장법 시행규칙 제3조·제6조. 확인 2026-11-08. law.go.kr
@@ -331,15 +347,11 @@ function freeCore(plate) {
 }
 
 /**
- * 내부형 램프 모양 (추가 2026-11-10)
- * 도로변 변에서 직선으로 들어가다가, 층고를 다 내려가기 전에 반대쪽 순환 차로에 닿으면
- * 90° 곡선(내변 반경 6m, 14% 이하, 2차로 폭 6.5m)으로 꺾어 그 차로를 따라 직선으로 이어간다.
- * 근거: 주차장법 시행규칙 제6조①5 (가: 곡선 내변반경 6m, 다: 곡선 2차로 6.5m, 라: 직선 17%·곡선 14%, 바: 도로변 3m 8.5%)
- * 외부형 램프는 바꾸지 않는다(항상 직선).
+ * 램프 모양 (직선 / 90° 곡선 / 원형).
+ * 근거: 주차장법 시행규칙 제6조①5 (나: 내변반경 6m, 다: 곡선 2차로 6.5m, 라: 직선 17%·곡선 14%, 바: 도로변 3m).
+ * form: auto|straight|curve90|spiral (ramp.form 또는 plate.rampForm).
  *
- * 반환: { kind: "straight" | "curved", ok, reason, pieces: [사각형], polygons: [[{x,y}...]],
- *        path: [{x,y,s}] (중심선, s=누적 길이), segments: [{name,length,drop}], total,
- *        approach: 사각형(도착 차로) | null, lip: 사각형(도착 경계) | null }
+ * 반환: { kind: "straight" | "curved" | "spiral", ok, reason, pieces, polygons, path, segments, total, ... }
  */
 export const RAMP_R_IN = 6;
 export const RAMP_CURVE_W = 6.5;
@@ -348,9 +360,13 @@ export function rampShape(ramp, plate) {
   return withGap(ramp, plate, rampShapeRaw);
 }
 function rampShapeRaw(ramp, plate) {
+  const form = rampFormOf(ramp, plate && plate.rampForm);
+  if (form === "spiral") return spiralRampShape(ramp, plate);
+
   const box = rampFootprint(ramp, plate);
   const H = floorHeightOf(plate);
-  const tr = rampTransitions(plate);
+  const tr = rampTransitions(plate, ramp.level === "lower" ? "lower" : "ground");
+  const toLocal = localFrame(ramp.edge, plate);
   const straight = {
     kind: "straight", ok: true, reason: "",
     pieces: [box],
@@ -361,7 +377,28 @@ function rampShapeRaw(ramp, plate) {
     approach: null,
     lip: null,
   };
-  if ((ramp.placement || "internal") === "external") return straight;
+
+  const external = (ramp.placement || "internal") === "external";
+  // 외부형 + 90° 곡선: 대지 밖에서 회전해 들어옴.
+  if (external && form === "curve90") {
+    return externalCurve90Shape(ramp, plate, {
+      localFrame, arcSectors, straightDrop, straightSegments, rectPoly,
+    });
+  }
+  if (external) {
+    const L = ramp.length;
+    const segs = straightSegments(L, tr, H);
+    let acc = 0;
+    let dropAcc = 0;
+    straight.path = [{ ...toLocal.pt(ramp.t, -L, 0), h: 0 }];
+    segs.forEach((seg) => {
+      acc += seg.length;
+      dropAcc += seg.drop;
+      straight.path.push({ ...toLocal.pt(ramp.t, -L + acc, acc), h: round3(Math.min(H, dropAcc)) });
+    });
+    straight.segments = segs;
+    return straight;
+  }
 
   const vertical = ramp.edge === "n" || ramp.edge === "s";
   const across = vertical ? plate.depth : plate.width;
@@ -371,12 +408,23 @@ function rampShapeRaw(ramp, plate) {
   // 직선 램프는 반대쪽 벽 앞 6m(도착 후 꺾는 자리)까지 쓸 수 있다. 그 자리는 반대쪽 순환 차로와 이어지고,
   // 램프 줄에 걸린 반대쪽 주차칸 몇 칸만 빠진다. 곡선으로 꺾는 것보다 버리는 면적이 훨씬 적다.
   const maxStraight = across - v0 - AISLE;
-  const toLocal = localFrame(ramp.edge, plate);
-  if (Math.max(ramp.length, need) <= maxStraight + 1e-6) {
-    // 직선으로 충분: 기존과 같은 사각형. 중심선만 추가.
+  const wantStraight = form === "straight" || (form === "auto" && Math.max(ramp.length, need) <= maxStraight + 1e-6);
+  if (wantStraight && form !== "curve90") {
     const L = ramp.length;
-    straight.path = [toLocal.pt(ramp.t, v0, 0), toLocal.pt(ramp.t, v0 + L, L)];
-    straight.segments = straightSegments(L, tr, H);
+    const segs = straightSegments(L, tr, H);
+    let acc = 0;
+    let dropAcc = 0;
+    straight.path = [{ ...toLocal.pt(ramp.t, v0, 0), h: 0 }];
+    segs.forEach((seg) => {
+      acc += seg.length;
+      dropAcc += seg.drop;
+      straight.path.push({ ...toLocal.pt(ramp.t, v0 + acc, acc), h: round3(Math.min(H, dropAcc)) });
+    });
+    straight.segments = segs;
+    if (form === "straight" && Math.max(ramp.length, need) > maxStraight + 1e-6) {
+      straight.ok = false;
+      straight.reason = "직선 램프 길이가 평면 깊이를 넘습니다(곡선·원형을 선택하세요)";
+    }
     return straight;
   }
 
@@ -546,6 +594,25 @@ export function rampFootprint(ramp, plate) {
   return withGap(ramp, plate, rampFootprintRaw);
 }
 function rampFootprintRaw(ramp, plate) {
+  if (rampFormOf(ramp, plate && plate.rampForm) === "spiral") {
+    const shape = spiralRampShape(ramp, plate);
+    return shape.footprint || shape.pieces[0];
+  }
+  if ((ramp.placement || "internal") === "external" && rampFormOf(ramp, plate && plate.rampForm) === "curve90") {
+    const shape = externalCurve90Shape(ramp, plate, {
+      localFrame, arcSectors, straightDrop, straightSegments, rectPoly,
+    });
+    if (shape.footprint) return shape.footprint;
+    // pieces 전체 AABB
+    const ps = shape.pieces || [];
+    if (ps.length) {
+      const x0 = Math.min(...ps.map((p) => p.x));
+      const y0 = Math.min(...ps.map((p) => p.y));
+      const x1 = Math.max(...ps.map((p) => p.x + p.w));
+      const y1 = Math.max(...ps.map((p) => p.y + p.d));
+      return { x: x0, y: y0, w: x1 - x0, d: y1 - y0 };
+    }
+  }
   const { edge, t, width, length } = ramp;
   const external = (ramp.placement || "internal") === "external";
   const k = insetOf(ramp);
@@ -560,6 +627,30 @@ export function rampTopLip(ramp, plate) {
   return withGap(ramp, plate, rampTopLipRaw);
 }
 function rampTopLipRaw(ramp, plate) {
+  if (rampFormOf(ramp, plate && plate.rampForm) === "spiral") {
+    const box = rampFootprint(ramp, plate);
+    // 우물 안쪽(평면 중심 쪽) 변에 진입 띠 — 순환 차로와 닿게.
+    const cx = plate.width / 2;
+    const cy = plate.depth / 2;
+    const midX = box.x + box.w / 2;
+    const midY = box.y + box.d / 2;
+    if (Math.abs(cx - midX) >= Math.abs(cy - midY)) {
+      const right = cx > midX;
+      return {
+        x: right ? box.x + box.w - 0.2 : box.x - 1.0,
+        y: box.y + box.d * 0.2,
+        w: 1.2,
+        d: box.d * 0.6,
+      };
+    }
+    const up = cy > midY;
+    return {
+      x: box.x + box.w * 0.2,
+      y: up ? box.y + box.d - 0.2 : box.y - 1.0,
+      w: box.w * 0.6,
+      d: 1.2,
+    };
+  }
   const k = insetOf(ramp);
   const half = ramp.width / 2;
   if (ramp.edge === "w") return { x: k - 1.0, y: ramp.t - half, w: 1.2, d: ramp.width };
@@ -1274,19 +1365,22 @@ function layoutCore(input) {
     length: shifted.length || defaultRampLength(plate, shifted.edge || "w"),
   }, plate);
   ramp.placement = spec.rampPlacement;
+  ramp.form = rampFormOf(ramp, plate.rampForm || input.rampForm || "auto");
   // 입력한 램프 길이가 직선으로 쓸 수 있는 길이보다 길어도, 법정 최소 길이가 들어가면 직선으로 줄여 쓴다
-  // (길게 입력했다는 이유로 곡선이 되어 모서리 공간을 버리지 않게).
-  if (ramp.placement !== "external") {
+  // (길게 입력했다는 이유로 곡선이 되어 모서리 공간을 버리지 않게). 단 curve90·spiral은 유지.
+  if (ramp.placement !== "external" && ramp.form === "auto") {
     const vertical = ramp.edge === "n" || ramp.edge === "s";
     const across = vertical ? plate.depth : plate.width;
     const maxStraight = across - insetOf(ramp) - AISLE;
     const need = minStraightRampLength(floorHeightOf(plate), rampTransitions(plate));
     if (need <= maxStraight + 1e-6 && ramp.length > maxStraight) ramp.length = round1(Math.floor(maxStraight * 10) / 10);
   }
-  // 곡선이 섞이면 곡선 2차로 6.5m에 맞춰 직선 부분도 6.5m로 통일한다(직선만이면 6m).
-  if (ramp.placement !== "external") {
-    const curved = rampShape({ ...ramp, width: AISLE }, plate).kind === "curved";
-    ramp.width = curved ? Math.max(ramp.width, RAMP_CURVE_W) : (ramp.width === RAMP_CURVE_W ? AISLE : ramp.width);
+  // 곡선·원형이 섞이면 곡선 2차로 6.5m에 맞춰 폭을 올린다.
+  if (ramp.form === "spiral" || ramp.form === "curve90"
+    || (ramp.placement !== "external" && rampShape({ ...ramp, width: AISLE }, plate).kind !== "straight")) {
+    ramp.width = Math.max(ramp.width, RAMP_CURVE_W);
+  } else if (ramp.width === RAMP_CURVE_W) {
+    ramp.width = AISLE;
   }
   // 벽 가까이 둔 직선 램프는 벽에 딱 붙인다(틈 없이 램프 줄을 만든다).
   let strip = spec.strip === "off" ? null : wallStrip(ramp, plate);
@@ -1344,8 +1438,16 @@ function layoutCore(input) {
   const bay = stallsPerBay(plate.spacing, plate.columnWidth, plate.minClear);
   const bayStats = { total: 0, triple: 0 };
   const shape = rampShape(ramp, plate);
-  const internal = (ramp.placement || "internal") === "internal";
-  const rampPieces = internal ? shape.pieces : [];
+  const internal = (ramp.placement || "internal") === "internal" || shape.kind === "spiral" || shape.externalCurve;
+  // 지하 2층+ 다른 경로(alternate)면 층간 램프 자리도 평면에 비워 둔다.
+  const lowerMode = plate.lowerRampMode || input.lowerRampMode || "alternate";
+  const occ = occupancyRamps([ramp], plate, lowerMode);
+  const rampPieces = [];
+  occ.forEach((r) => {
+    const sh = rampShape(r, plate);
+    (sh.pieces || []).forEach((p) => rampPieces.push(p));
+  });
+  if (!rampPieces.length && internal) (shape.pieces || []).forEach((p) => rampPieces.push(p));
   // 도로 쪽 벽 줄 없는 안(layoutRoadless): 가상 벽 줄 자리는 차로로 → 순환 차로가 실제 벽에 붙고 출입구와 이어짐
   let aisles = geo.aisles.concat((plate.extraAisles || []).map((a) => ({ ...a, role: "ring", phase: "loop", portals: [] })));
   if ((ramp.placement || "internal") === "internal") {
@@ -1381,6 +1483,12 @@ function layoutCore(input) {
   blockRects.forEach((b) => {
     aisles = ensureBlockAccess(aisles, b, plate, blockers);
   });
+  // 원형 우물도 차로와 닿게 접근 띠를 붙인다.
+  if (shape.kind === "spiral") {
+    rampPieces.forEach((b) => {
+      aisles = ensureBlockAccess(aisles, b, plate, blockers);
+    });
+  }
   // 이어서 생긴 차로가 다시 블록을 침범하면 한 번 더 자른다.
   blockRects.forEach((b) => {
     aisles = cutAislesByBlock(aisles, b);

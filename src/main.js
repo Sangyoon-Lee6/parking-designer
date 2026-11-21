@@ -1,11 +1,11 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=247";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=247";
-import { drawThumb, mountPlan } from "./plan.js?v=247";
-import { stallRuleTargets } from "./stallTypes.js?v=247";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=247";
-import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=247";
-import { bindContextDialog, closeContext, openContext } from "./context.js?v=247";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=247";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=248";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=248";
+import { drawThumb, mountPlan } from "./plan.js?v=248";
+import { stallRuleTargets } from "./stallTypes.js?v=248";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=248";
+import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=248";
+import { bindContextDialog, closeContext, openContext } from "./context.js?v=248";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=248";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -151,6 +151,23 @@ function renderRampPos() {
       ? `이 크기에서는 이 위치에 램프가 들어가지 않습니다(${why}). 자동이나 다른 위치를 고르세요.`
       : "";
 }
+$("ramp-form").addEventListener("change", () => {
+  state.rampForm = $("ramp-form").value;
+  state.ramps = (state.ramps || []).map((r) => ({ ...r, form: state.rampForm }));
+  if (state.plate) {
+    state.plate = { ...state.plate, rampForm: state.rampForm };
+    generatePlate();
+  }
+  emit();
+});
+$("lower-ramp-mode").addEventListener("change", () => {
+  state.lowerRampMode = $("lower-ramp-mode").value;
+  if (state.plate) {
+    state.plate = { ...state.plate, lowerRampMode: state.lowerRampMode };
+    generatePlate();
+  }
+  emit();
+});
 $("ramp-placement").addEventListener("change", () => {
   state.rampPlacement = $("ramp-placement").value;
   render();
@@ -360,7 +377,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=247")
+    sceneMount = import("./scene.js?v=248")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -453,6 +470,8 @@ function render() {
   if (document.activeElement !== $("min-clear")) $("min-clear").value = Number(state.minClear).toFixed(2);
   setIfIdle($("site-margin"), state.siteMargin);
   if (document.activeElement !== $("ramp-placement")) $("ramp-placement").value = state.rampPlacement;
+  if (document.activeElement !== $("ramp-form")) $("ramp-form").value = state.rampForm || "auto";
+  if (document.activeElement !== $("lower-ramp-mode")) $("lower-ramp-mode").value = state.lowerRampMode || "alternate";
   if (document.activeElement !== $("road-edge")) $("road-edge").value = state.roadEdge;
   renderRampPos();
   $("site-margin-row").hidden = state.rampPlacement !== "external";
@@ -491,9 +510,16 @@ function render() {
   $("add-core").textContent = state.siteType === "complex" ? "동 추가" : "코어 추가";
   if (state.metrics && state.metrics.rampKind) {
     const ramp = state.ramps[0];
-    const curved = state.metrics.rampKind === "curved";
-    rows.push(["램프", curved ? `직선+곡선 ${state.metrics.rampTotal}m` : `직선 ${ramp ? ramp.length : "—"}m`]);
-    if (!curved && Number.isFinite(state.metrics.rampLowerSlope)) rows.push(["지하층 사이 램프", `같은 길이 · 본 경사 ${(state.metrics.rampLowerSlope * 100).toFixed(1)}% (도로변 3m 해당 없음)`]);
+    const kind = state.metrics.rampKind;
+    const formLabel = state.rampForm === "spiral" || kind === "spiral" ? "원형(나선)"
+      : kind === "curved" ? "직선+곡선 90°"
+        : "직선";
+    rows.push(["램프", `${formLabel} ${state.metrics.rampTotal || (ramp && ramp.length) || "—"}m`]);
+    const lowerMode = state.lowerRampMode || "alternate";
+    rows.push(["지하 2층+ 경로", lowerMode === "same" ? "전 층 동일 XY" : (kind === "spiral" ? "같은 원형 우물" : "반대쪽 변 층간 램프")]);
+    if (kind === "straight" && Number.isFinite(state.metrics.rampLowerSlope)) {
+      rows.push(["층간 본 경사", `${(state.metrics.rampLowerSlope * 100).toFixed(1)}% (도로변 3m 없음)`]);
+    }
   }
   if (state.metrics && state.trimDeadEnds) {
     rows.push(["진입 불가 제외", `${state.metrics.unreachable || 0}칸`]);

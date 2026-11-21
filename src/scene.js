@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint } from "./layout.js?v=247";
-import { state, subscribe, summary } from "./state.js?v=247";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=248";
+import { state, subscribe, summary } from "./state.js?v=248";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -87,6 +87,8 @@ function rebuild(sun) {
     buildings: state.buildings,
     openings: state.openings,
     ramps: state.ramps,
+    rampForm: state.rampForm,
+    lowerRampMode: state.lowerRampMode,
     route: state.route,
     columns: state.columns.length,
     stalls: state.stalls.length,
@@ -125,7 +127,14 @@ function rebuild(sun) {
     state.columns.forEach((column, index) => addColumn(column, index, base, columnMat, hazard));
     addClearance(base);
     state.cores.forEach((core) => addCore(core, coreMat, base));
-    state.ramps.forEach((ramp) => addRamp(ramp, rampMat, base, hazard));
+    // B1(level 0): 지상→지하 진입 램프. B2+(level≥1): 층간 다른 경로(기본 alternate).
+    const levelRamps = rampsForLevel(
+      state.ramps,
+      plate,
+      level,
+      state.lowerRampMode || (plate && plate.lowerRampMode) || "alternate",
+    );
+    levelRamps.forEach((ramp) => addRamp(ramp, rampMat, base, hazard));
     addWalls(concrete, base);
     addGates(base);
     state.openings.forEach((opening) => {
@@ -302,9 +311,56 @@ function addCore(core, material, base) {
 }
 
 function addRamp(ramp, material, base, hazard) {
-  const footprint = rampFootprint(ramp, state.plate);
+  const plate = state.plate;
+  const shape = rampShape(ramp, plate);
+  const footprint = shape.footprint || rampFootprint(ramp, plate);
+  const H = FLOOR_H;
+  // path에 하강 h가 있으면 리본 메시로 그린다(곡선·원형·직선 공통).
+  if (shape.path && shape.path.length >= 2 && shape.path.some((p) => p.h != null)) {
+    addRampRibbon(shape, ramp, material, base, H);
+  } else {
+    addRampQuad(ramp, footprint, material, base, H);
+  }
+  addRampEdges(ramp, footprint, base, hazard);
+}
+
+/** 중심선 path(x,y,h)를 따라 폭 있는 경사 리본. */
+function addRampRibbon(shape, ramp, material, base, H) {
+  const path = shape.path;
+  const half = Math.max(3, (ramp.width || shape.width || 6) / 2);
+  const positions = [];
+  const pushTri = (a, b, c) => {
+    positions.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+  };
+  for (let i = 0; i < path.length - 1; i += 1) {
+    const p0 = path[i];
+    const p1 = path[i + 1];
+    const dx = p1.x - p0.x;
+    const dz = p1.y - p0.y;
+    const len = Math.hypot(dx, dz) || 1;
+    const nx = (-dz / len) * half;
+    const nz = (dx / len) * half;
+    const y0 = base + H - (p0.h == null ? 0 : p0.h);
+    const y1 = base + H - (p1.h == null ? H : p1.h);
+    const a = [p0.x + nx, y0, p0.y + nz];
+    const b = [p0.x - nx, y0, p0.y - nz];
+    const c = [p1.x - nx, y1, p1.y - nz];
+    const d = [p1.x + nx, y1, p1.y + nz];
+    pushTri(a, b, c);
+    pushTri(a, c, d);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
+  geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  host.add(mesh);
+}
+
+function addRampQuad(ramp, footprint, material, base, H) {
   const low = base + 0.12;
-  const high = base + FLOOR_H;
+  const high = base + H;
   let corners;
   if (ramp.edge === "s") {
     corners = [
@@ -346,7 +402,6 @@ function addRamp(ramp, material, base, hazard) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   host.add(mesh);
-  addRampEdges(ramp, footprint, base, hazard);
 }
 
 function addWalls(material, base) {
