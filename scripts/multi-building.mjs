@@ -96,13 +96,19 @@ function aisleAreaIn(aisles, block) {
   if (recV) console.log(`  추천 ${recV.id}: ${recV.metrics.stalls}대`);
 }
 
-// ── 경우 B: 코어 겹침 → invalid ──────────────────────────────
+// ── 경우 B: 겹친 코어 → 밀어 분리(또는 못 밀면 invalid) ──────
 {
   const plate = basePlate();
   const a = snapCore({ x: 40, y: 25, w: 16.2, d: 8.1, nx: 2, ny: 1, grid: true }, plate);
   const b = { ...a, x: a.x + 8.1 };
   const res = layoutParking(inputOf(plate, [a, b]));
-  ok("B 겹친 코어 invalid", res.metrics.valid === false, `overlap=${res.metrics.overlapCount}`);
+  const gap = rectGap(res.cores[0], res.cores[1]);
+  const stillClose = gap < AISLE || ov(res.cores[0], res.cores[1]) > 0.03;
+  ok(
+    "B 겹친 코어 분리 또는 invalid",
+    !stillClose || res.metrics.valid === false,
+    `gap=${gap.toFixed(1)} ov=${res.metrics.overlapCount} valid=${res.metrics.valid}`,
+  );
 }
 
 // ── 경우 C: 단일 코어 대수 스냅샷 ────────────────────────────
@@ -211,6 +217,46 @@ function aisleAreaIn(aisles, block) {
     if (aisleAreaIn(v.aisles, block) >= 0.1) bad += 1;
   }
   ok("G 북쪽 블록 칸·차로 0", bad === 0 && valid.length >= 0, `valid ${valid.length}, bad ${bad}`);
+}
+
+// ── 경우 I: 외부 램프+여유 20m → site 안내(길이·내부 권장) ───
+{
+  const plate = basePlate({
+    width: 73.9,
+    depth: 57.7,
+    siteMargin: 20,
+    roadEdge: "w",
+    legalStalls: 112,
+    buildings: [{ id: 1, name: "101동" }],
+    stallRules: { disabled: true, disabledRate: 0.03, legalStalls: 112, parallel: true },
+  });
+  const len = minStraightRampLength(3.2, rampTransitions({ legalStalls: 112 }));
+  const vs = generateVariants({
+    plate,
+    cores: defaultCores(plate, 3),
+    ramps: [{ id: 1, edge: "w", t: 28, width: 6, length: len, placement: "external" }],
+    openings: [],
+    rampPlacement: "external",
+    entranceMode: "integrated",
+  });
+  const site = (vs[0].issues || []).filter((i) => i.type === "site");
+  ok("I 외부 램프 site 오류", site.length >= 1 && vs.every((v) => !v.metrics.valid));
+  ok("I 안내문 내부 램프 권장", site.some((i) => /내부 램프/.test(i.label) && /21\.4/.test(i.label)), site[0] && site[0].label);
+  // 같은 조건 내부 램프면 통과안 존재
+  const vsIn = generateVariants({
+    plate: { ...plate, buildings: plate.buildings },
+    cores: defaultCores(plate, 3).map((c, i) => {
+      c.buildingId = i + 1;
+      c.kind = "building";
+      return c;
+    }),
+    ramps: [{ id: 1, edge: "w", t: 28, width: 6, length: len, placement: "internal" }],
+    openings: [],
+    rampPlacement: "internal",
+    entranceMode: "integrated",
+  });
+  const validIn = vsIn.filter((v) => v.metrics.valid);
+  ok("I 내부 전환 후 통과", validIn.length >= 1, `${validIn.length}개 · col ${validIn[0] && validIn[0].metrics.columnHits} ov ${validIn[0] && validIn[0].metrics.overlapCount}`);
 }
 
 // ── 경우 H: blockUnder false → 대수≈A, transfer notes ────────

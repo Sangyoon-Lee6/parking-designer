@@ -3,7 +3,7 @@
 AI(Claude)와 함께 확인·수정한 내용입니다. 각 항목은 문제 → 원인 → 수정 → 확인 순서로 적었습니다.
 점검은 `node scripts/report.mjs`(기존 회귀 점검)와 `node scripts/stall-types.mjs`(이번 추가 점검)로 했습니다.
 
-## v241–v246 — 단지형(여러 동 + 지하주차장 1개)
+## v241–v247 — 단지형(여러 동 + 지하주차장 1개)
 
 - **v241** 코어끼리 겹침·6m 미만 간격 검사, `pushOutOf`가 이미 둔 코어를 피함, `scripts/multi-building.mjs` 추가.
 - **v242** `siteType` / `buildings` / `cores.kind`·`buildingId`, `defaultCores`·`stairCore`, `clampCore`가 kind·buildingId 보존.
@@ -11,6 +11,7 @@ AI(Claude)와 함께 확인·수정한 내용입니다. 각 항목은 문제 →
 - **v244** 2단계 동 외곽·빗금, 계단 코어, `blockUnder`→`towerBlockRects`로 칸·차로 금지, 전이 구조 안내.
 - **v245** 3D 타워 매스·도면 동 라벨·동별 표.
 - **v246** 장애인 칸 동별 분배, multi-building sweep, README 단지형 절. 캐시 태그 `?v=246`.
+- **v247** 단지형 3D 불가(외부 램프·코어 겹침) 대응: 단지형 기본 내부 램프, 외부 램프가 대지 여유보다 길면 내부로 자동 전환·안내 강화, 좁은 평면은 동 수에 맞게 확대, `defaultCores` 축소·`pushAwayFromOthers`, 이슈 중복(기둥 충돌) 제거. 캐시 `?v=247`.
 
 
 ## 1. 비주거 시설 주차대수 끝수 처리 오류 — `src/demand.js`

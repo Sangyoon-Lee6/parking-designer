@@ -6,7 +6,7 @@ import {
   uses,
   zoneFactors,
   zoneUseStatus,
-} from "./parkingRules.js?v=246";
+} from "./parkingRules.js?v=247";
 
 export function emptyDemand() {
   return {

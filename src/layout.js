@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=246";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=247";
 
 /**
  * 주차장법 시행규칙 제3조·제6조. 확인 2026-11-08. law.go.kr
@@ -187,6 +187,7 @@ export function defaultCore(plate) {
 /**
  * 단지형: 동 코어(kind "building") n개를 순환 차로 안쪽 격자에 고르게 둔다.
  * n=1이면 defaultCore와 같은 위치·크기(+ kind "building").
+ * 평면이 좁으면 추천 칸 수를 줄여 코어끼리 6m+ 틈과 순환 차로 안쪽을 지킨다.
  */
 export function defaultCores(plate, n, cells) {
   const count = Math.max(1, Math.floor(Number(n) || 1));
@@ -194,9 +195,28 @@ export function defaultCores(plate, n, cells) {
     const one = defaultCore(plate);
     return [{ ...one, kind: one.kind || "building" }];
   }
-  const rec = cells || recommendCoreCells(plate);
-  const inset = edgeGap(plate) + STALL_D + AISLE;
   const minGap = AISLE + 2 * STALL_D;
+  const inset = edgeGap(plate) + STALL_D + AISLE;
+  let rec = cells || recommendCoreCells(plate);
+  // 좁은 평면에 큰 코어를 억지로 넣으면 clamp가 크기를 잘라 격자·간격이 깨진다 → 칸 수를 줄인다.
+  for (let shrink = 0; shrink < 4; shrink += 1) {
+    const needW = count * rec.w + (count - 1) * minGap + inset * 2;
+    const needD1 = rec.d + inset * 2;
+    const needD2 = 2 * rec.d + minGap + inset * 2;
+    const fits1 = needW <= plate.width + 0.05 && needD1 <= plate.depth + 0.05;
+    const fits2 = (Math.ceil(count / 2) * rec.w + (Math.ceil(count / 2) - 1) * minGap + inset * 2) <= plate.width + 0.05
+      && needD2 <= plate.depth + 0.05;
+    if (fits1 || fits2 || (rec.nx <= 1 && rec.ny <= 1)) break;
+    if (rec.nx >= rec.ny && rec.nx > 1) {
+      const nx = rec.nx - 1;
+      const w = round3(nx * plate.spacing - (plate.columnWidth || COLUMN));
+      rec = { nx, ny: rec.ny, w, d: rec.d };
+    } else if (rec.ny > 1) {
+      const ny = rec.ny - 1;
+      const d = round3(ny * plate.spacing - (plate.columnDepth || plate.columnWidth || COLUMN));
+      rec = { nx: rec.nx, ny, w: rec.w, d };
+    } else break;
+  }
   const innerW = Math.max(rec.w, plate.width - inset * 2);
   const innerD = Math.max(rec.d, plate.depth - inset * 2);
   // 1열로 넣을 수 있으면 1열, 아니면 2열.
@@ -571,6 +591,36 @@ function withArrivalZone(box, ramp, plate) {
 function conflictsOthers(c, others) {
   if (!others || !others.length) return false;
   return others.some((o) => overlapArea(c, o) > 0.01 || rectGap(c, o) < AISLE);
+}
+
+/**
+ * 램프 박스가 없어도(외부 램프 등) 다른 코어와 겹치거나 6m 미만이면
+ * 격자 칸 중 충돌 없는 자리로 옮긴다.
+ */
+function pushAwayFromOthers(core, plate, lines, others) {
+  if (!conflictsOthers(core, others)) return core;
+  if (!(lines && core.grid !== false && plate.spacing > 0)) return core;
+  const ring = STALL_D + AISLE;
+  const nx = core.nx || 1;
+  const ny = core.ny || 1;
+  let best = null;
+  for (let i = 0; i + nx < lines.gx.length; i += 1) {
+    for (let j = 0; j + ny < lines.gy.length; j += 1) {
+      const c = {
+        ...core,
+        x: lines.gx[i],
+        y: lines.gy[j],
+        w: round3(lines.gx[i + nx] - lines.gx[i]),
+        d: round3(lines.gy[j + ny] - lines.gy[j]),
+      };
+      if (c.w < nx * plate.spacing * 0.75 || c.d < ny * plate.spacing * 0.75) continue;
+      if (conflictsOthers(c, others)) continue;
+      if (c.x < ring - 0.3 || c.y < ring - 0.3 || c.x + c.w > plate.width - ring + 0.3 || c.y + c.d > plate.depth - ring + 0.3) continue;
+      const dist = Math.hypot(c.x - core.x, c.y - core.y);
+      if (!best || dist < best.dist) best = { c, dist };
+    }
+  }
+  return best ? best.c : core;
 }
 
 function pushOutOf(core, box, plate, lines, others) {
@@ -1270,17 +1320,23 @@ function layoutCore(input) {
   }
   const gridLines = { gx: gridX, gy: gridY };
   const coresIn = (input.cores || (input.core ? [input.core] : [])).filter(Boolean).map((core) => clampCore(core, plate));
-  // 코어를 순서대로 확정: 이미 둔 코어(others)와 겹치거나 6m 미만으로 붙는 후보는 pushOutOf에서 건너뛴다.
+  // 코어를 순서대로 확정: 이미 둔 코어(others)와 겹치거나 6m 미만으로 붙는 후보는 건너뛴다.
+  // 외부 램프(rampBox 없음)에서도 코어끼리 겹치면 pushAwayFromOthers로 간격을 확보한다.
   const cores = [];
   coresIn.forEach((core) => {
     const snapped = snapToLines(core, gridLines, plate);
     if (!rampBox) {
-      cores.push(snapped);
+      const apart = pushAwayFromOthers(snapped, plate, gridLines, cores);
+      cores.push(!conflictsOthers(apart, cores) ? apart : snapped);
       return;
     }
     const pushed = pushOutOf(snapped, rampBox, plate, gridLines, cores);
     const again = snapToLines(pushed, gridLines, plate);
-    cores.push(overlapArea(again, rampBox) < 0.01 && !conflictsOthers(again, cores) ? again : pushed);
+    let placed = overlapArea(again, rampBox) < 0.01 && !conflictsOthers(again, cores) ? again : pushed;
+    if (conflictsOthers(placed, cores)) {
+      placed = pushAwayFromOthers(placed, plate, gridLines, cores);
+    }
+    cores.push(placed);
   });
   // 코어가 램프(도착 앞 6m 포함)와 겹쳐 옆으로 밀렸으면 알림으로 남긴다(배치는 정상 진행).
   const movedCores = cores.map((core, i) => (Math.abs(core.x - coresIn[i].x) > 0.05 || Math.abs(core.y - coresIn[i].y) > 0.05 ? i : -1)).filter((i) => i >= 0);
@@ -2681,13 +2737,44 @@ function roadIssues(ramps, plate) {
   }));
 }
 
+/** 외부 램프가 대지 여유 안에 들어가는지. 필요 여유(m)도 같이 돌려준다. */
+export function externalRampClearance(ramp, plate) {
+  if (!ramp || (ramp.placement || "internal") !== "external") {
+    return { fits: true, need: 0, have: 0, edge: ramp && ramp.edge };
+  }
+  const m = siteMarginsOf(plate);
+  const edge = ramp.edge || "w";
+  const have = m[edge] == null ? (plate.siteMargin == null ? 20 : plate.siteMargin) : m[edge];
+  const need = round1(Math.max(Number(ramp.length) || 0, defaultRampLength(plate, edge)));
+  const outside = rampOutside(ramp, plate, m);
+  return { fits: !outside, need, have, edge, outside };
+}
+
+/** 단지형·외부 램프에서 대지 여유가 램프 길이보다 짧으면 내부 램프로 바꾸는 편이 낫다. */
+export function shouldPreferInternalRamp(plate, rampPlacement) {
+  if ((rampPlacement || "internal") !== "external") return false;
+  if (!(plate && (plate.buildings || []).length)) return false;
+  const edge = plate.roadEdge || "w";
+  const probe = { edge, t: 10, width: 6, length: defaultRampLength(plate, edge), placement: "external" };
+  return !externalRampClearance(probe, plate).fits;
+}
+
 function siteIssues(ramps, plate) {
   const m = siteMarginsOf(plate);
-  return ramps.filter((ramp) => rampOutside(ramp, plate, m)).map((ramp) => ({
-    type: "site",
-    id: ramp.id,
-    label: `${edgeLabel(ramp.edge)}측 램프가 대지 여유 ${m[ramp.edge]}m 밖으로 나갑니다.`,
-  }));
+  const complex = plate && Array.isArray(plate.buildings) && plate.buildings.length > 0;
+  return ramps.filter((ramp) => rampOutside(ramp, plate, m)).map((ramp) => {
+    const edge = ramp.edge;
+    const have = m[edge];
+    const need = round1(Math.max(Number(ramp.length) || 0, defaultRampLength(plate, edge)));
+    let label = `${edgeLabel(edge)}측 램프가 대지 여유 ${have}m 밖으로 나갑니다.`;
+    if ((ramp.placement || "internal") === "external" && need > have + 0.05) {
+      label += ` 외부 램프 길이 ${need}m이면 해당 변 대지 여유를 ${need}m 이상으로 늘리거나,`;
+      label += complex
+        ? " 단지형은 내부 램프를 권장합니다(조건 → 램프 형식)."
+        : " 내부 램프로 바꾸세요(조건 → 램프 형식).";
+    }
+    return { type: "site", id: ramp.id, label };
+  });
 }
 
 function rampOutside(ramp, plate, m) {

@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=246";
+import { calculateDemand, emptyDemand } from "./demand.js?v=247";
 import {
   basementCount,
   clampCore,
@@ -7,6 +7,7 @@ import {
   defaultCores,
   defaultRampLength,
   defaultTower,
+  externalRampClearance,
   generateVariants,
   intervalsOverlap,
   layoutParking,
@@ -14,7 +15,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=246";
+} from "./layout.js?v=247";
 
 export const state = {
   step: 1,
@@ -175,15 +176,24 @@ export function updateSiteMargins(all, partial) {
 export function issueGroups() {
   const errors = [];
   const warnings = [];
+  let hasColumnIssue = false;
+  let hasNetworkIssue = false;
   for (const issue of state.issues || []) {
     const label = issue.label || issue.message || String(issue.type || issue);
-    if (issue.type === "notice" || issue.type === "warn" || issue.type === "roadless") warnings.push(label);
-    else errors.push(label);
+    if (issue.type === "notice" || issue.type === "warn" || issue.type === "roadless") {
+      warnings.push(label);
+      continue;
+    }
+    if (issue.type === "column") hasColumnIssue = true;
+    if (issue.type === "opening" || issue.type === "ramp" || issue.type === "network") hasNetworkIssue = true;
+    errors.push(label);
   }
-  if (state.metrics && state.metrics.columnHits > 0) {
+  // metrics.columnHits는 이미 type:"column" 이슈로 들어가므로 중복 문구를 넣지 않는다.
+  if (!hasColumnIssue && state.metrics && state.metrics.columnHits > 0) {
     errors.push(`기둥이 주차칸과 ${state.metrics.columnHits}곳 겹칩니다.`);
   }
-  if (state.plate && !state.connected) {
+  // state.connected는 metrics.valid(대지 밖 포함)라서, 실제 차로 끊김일 때만 동선 문구를 붙인다.
+  if (hasNetworkIssue || (state.metrics && state.metrics.connected === false)) {
     errors.push("차로가 하나로 이어지지 않거나 배치가 유효하지 않습니다.");
   }
   return { errors, warnings };
@@ -318,7 +328,22 @@ function seedAccess() {
 }
 
 export function generatePlate() {
+  const notes = [];
   state.plate = plateFromState();
+  let resizedComplex = false;
+  if (state.siteType === "complex") {
+    // 좁은 기본 평면(48×42)에 동 3개를 억지로 넣으면 코어·차로가 무너진다 → 동 수에 맞게 키운다.
+    const n = Math.max(1, state.buildings.length || state.cores.filter((c) => (c.kind || "building") !== "stair").length || 3);
+    const minW = n >= 3 ? 80 : n >= 2 ? 60 : 48;
+    const minD = n >= 3 ? 58 : n >= 2 ? 50 : 42;
+    if (state.parkWidth < minW || state.parkDepth < minD) {
+      state.parkWidth = Math.max(state.parkWidth, minW);
+      state.parkDepth = Math.max(state.parkDepth, minD);
+      state.plate = plateFromState();
+      resizedComplex = true;
+      notes.push(`단지형 동 ${n}개에 맞춰 평면을 ${state.parkWidth}×${state.parkDepth}m로 키웠습니다.`);
+    }
+  }
   if (!state.cores.length) {
     if (state.siteType === "complex" && state.buildings.length) {
       linkBuildingsToCores(defaultCores(state.plate, state.buildings.length));
@@ -326,22 +351,24 @@ export function generatePlate() {
       state.cores = [defaultCore(state.plate)];
     }
   } else if (state.siteType === "complex" && state.buildings.length) {
-    // 계단 코어는 유지, 동 코어가 없으면 동 수만큼 채움.
+    // 계단 코어는 유지, 동 코어가 없으면 동 수만큼 채움. 평면이 커졌으면 동 코어를 다시 고르게 둔다.
     const stairs = state.cores.filter((c) => c.kind === "stair").map((c) => clampCore(c, state.plate));
     const buildingCores = state.cores.filter((c) => (c.kind || "building") !== "stair");
-    if (!buildingCores.length) {
+    if (!buildingCores.length || resizedComplex) {
       linkBuildingsToCores(defaultCores(state.plate, state.buildings.length));
       state.cores = state.cores.concat(stairs);
     }
   }
-  state.cores = state.cores.map((core) => (core.grid === false ? clampCore(core, state.plate) : clampCore(core, state.plate)));
+  state.cores = state.cores.map((core) => clampCore(core, state.plate));
   syncCore();
   if (state.siteType === "complex") {
     state.plate.blockRects = towerBlockRects(state.buildings, state.cores, state.plate);
     state.plate.buildings = state.buildings;
+    const rampNote = ensureComplexRampFits();
+    if (rampNote) notes.push(rampNote);
   }
   seedAccess();
-  state.referenceNotes = [];
+  state.referenceNotes = notes;
   refreshVariants();
   const best = Math.max(0, state.variants.findIndex((variant) => variant.recommended));
   state.step = 2;
@@ -544,6 +571,8 @@ export function setSiteType(type) {
     }
     state.demand.active = { ...(state.demand.active || {}), apartment: true };
     state.noGroundAccess = true;
+    // 단지형은 동·코어가 많아 외부 램프+짧은 대지 여유가 자주 깨진다 → 내부 램프를 기본으로.
+    preferInternalRampForComplex("단지형으로 바꿔 내부 램프를 기본으로 썼습니다.");
   } else {
     state.buildings = [];
     if (state.plate) {
@@ -560,6 +589,45 @@ export function setSiteType(type) {
   }
   if (state.plate) rebuildLayout();
   emit();
+}
+
+/** 단지형은 내부 램프를 기본으로 쓴다(외부+짧은 대지 여유가 자주 깨짐). */
+function preferInternalRampForComplex(notice) {
+  if (state.rampPlacement === "internal"
+    && (state.ramps || []).every((r) => (r.placement || "internal") === "internal")) {
+    return;
+  }
+  state.rampPlacement = "internal";
+  state.ramps = (state.ramps || []).map((r) => ({ ...r, placement: "internal" }));
+  if (notice) state.referenceNotes = (state.referenceNotes || []).concat([notice]);
+}
+
+/** @returns {string|null} 사용자 안내 문장(바꿨을 때만). */
+function ensureComplexRampFits() {
+  if (state.siteType !== "complex") return null;
+  const edge = state.roadEdge || (state.ramps[0] && state.ramps[0].edge) || "w";
+  const length = defaultRampLength(state.plate || plateFromState(), edge);
+  const external = state.rampPlacement === "external"
+    || (state.ramps[0] && state.ramps[0].placement === "external");
+  if (!external) return null;
+  const ramp = {
+    ...(state.ramps[0] || {}),
+    edge,
+    width: state.rampWidth || 6,
+    length: state.rampLength || length,
+    placement: "external",
+  };
+  const plate = {
+    ...(state.plate || plateFromState()),
+    buildings: state.buildings,
+    siteMargin: state.siteMargin,
+    siteMargins: state.siteMargins,
+  };
+  const clear = externalRampClearance(ramp, plate);
+  if (clear.fits) return null;
+  state.rampPlacement = "internal";
+  state.ramps = (state.ramps || []).map((r) => ({ ...r, placement: "internal", length: r.length || length }));
+  return `외부 램프(${clear.need}m)가 대지 여유 ${clear.have}m를 넘어 내부 램프로 바꿨습니다.`;
 }
 
 export function addBuilding() {

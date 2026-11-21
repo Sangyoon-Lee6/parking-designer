@@ -1,11 +1,11 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=246";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=246";
-import { drawThumb, mountPlan } from "./plan.js?v=246";
-import { stallRuleTargets } from "./stallTypes.js?v=246";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=246";
-import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=246";
-import { bindContextDialog, closeContext, openContext } from "./context.js?v=246";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=246";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=247";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=247";
+import { drawThumb, mountPlan } from "./plan.js?v=247";
+import { stallRuleTargets } from "./stallTypes.js?v=247";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=247";
+import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=247";
+import { bindContextDialog, closeContext, openContext } from "./context.js?v=247";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=247";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -360,7 +360,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=246")
+    sceneMount = import("./scene.js?v=247")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
