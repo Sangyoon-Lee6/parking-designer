@@ -1,5 +1,5 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=249";
-import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=249";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=251";
+import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=251";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -31,12 +31,10 @@ export function mountPlan(canvas) {
     const dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
-    ctx.fillStyle = "#e7e1d6";
+    ctx.fillStyle = "#f1f5f9";
     ctx.fillRect(0, 0, rect.width, rect.height);
     if (!state.plate) {
-      ctx.fillStyle = "#6f675f";
-      ctx.font = "16px Segoe UI, Malgun Gothic, sans-serif";
-      ctx.fillText("가로, 세로, 기둥 간격을 입력하면 차로와 주차구획이 놓입니다.", 28, 48);
+      drawPreviewShell(ctx, rect);
       return;
     }
     const key = `${state.plate.width}x${state.plate.depth}:${state.overlay.mode}:${Math.round(rect.width)}x${Math.round(rect.height)}`;
@@ -326,6 +324,53 @@ function viewBounds() {
     };
   }
   return { width: maxX - minX, height: maxY - minY, x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+}
+
+function drawPreviewShell(ctx, rect) {
+  const w = Math.max(18, Number(state.parkWidth) || 48);
+  const d = Math.max(18, Number(state.parkDepth) || 42);
+  const pad = 28;
+  const scale = Math.min((rect.width - pad * 2) / w, (rect.height - pad * 2) / d);
+  const ox = (rect.width - w * scale) / 2;
+  const oy = (rect.height - d * scale) / 2;
+  ctx.save();
+  ctx.translate(ox, oy + d * scale);
+  ctx.scale(scale, -scale);
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeStyle = "#334155";
+  ctx.lineWidth = 1.5 / scale;
+  ctx.fillRect(0, 0, w, d);
+  ctx.strokeRect(0, 0, w, d);
+  // light bay hints
+  const spacing = Math.max(5, Number(state.columnSpacing) || 8.1);
+  ctx.strokeStyle = "#cbd5e1";
+  ctx.lineWidth = 1 / scale;
+  for (let x = spacing; x < w - 0.1; x += spacing) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, d);
+    ctx.stroke();
+  }
+  for (let y = spacing; y < d - 0.1; y += spacing) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+  // road edge accent
+  const edge = state.roadEdge || "s";
+  ctx.strokeStyle = "#0f766e";
+  ctx.lineWidth = 4 / scale;
+  ctx.beginPath();
+  if (edge === "s") { ctx.moveTo(0, 0); ctx.lineTo(w, 0); }
+  else if (edge === "n") { ctx.moveTo(0, d); ctx.lineTo(w, d); }
+  else if (edge === "w") { ctx.moveTo(0, 0); ctx.lineTo(0, d); }
+  else { ctx.moveTo(w, 0); ctx.lineTo(w, d); }
+  ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = "#64748b";
+  ctx.font = "12px Pretendard, Noto Sans KR, sans-serif";
+  ctx.fillText(`${w} × ${d} m`, 14, rect.height - 14);
 }
 
 function fit(rect) {

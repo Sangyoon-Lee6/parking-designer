@@ -1,14 +1,15 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=249";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=249";
-import { drawThumb, mountPlan } from "./plan.js?v=249";
-import { stallRuleTargets } from "./stallTypes.js?v=249";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=249";
-import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=249";
-import { bindContextDialog, closeContext, openContext } from "./context.js?v=249";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=249";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=251";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=251";
+import { drawThumb, mountPlan } from "./plan.js?v=251";
+import { stallRuleTargets } from "./stallTypes.js?v=251";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=251";
+import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=251";
+import { bindContextDialog, closeContext, openContext } from "./context.js?v=251";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=251";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
+let planExpanded = false;
 
 const fields = {
   width: $("park-width"),
@@ -207,7 +208,73 @@ $("load-reference").addEventListener("click", () => {
 
 $("generate").addEventListener("click", () => {
   if (!inputsValid()) return;
+  planExpanded = true;
   busy("평면 만드는 중… (배치안 여러 개를 비교해요)", generatePlate);
+});
+
+function expandPlanPreview() {
+  if (planExpanded || state.step !== 1) return;
+  planExpanded = true;
+  render();
+  requestAnimationFrame(() => {
+    const fit = $("fit");
+    if (fit) fit.click();
+  });
+}
+
+$("plan-expand-hit").addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  expandPlanPreview();
+});
+$("plan-view").addEventListener("click", (event) => {
+  if (planExpanded || state.step !== 1) return;
+  if (event.target.closest(".toolbar, .toolbar-actions, #collapse-plan, #compare-dock, button")) return;
+  expandPlanPreview();
+});
+$("collapse-plan").addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  planExpanded = false;
+  if (state.step === 2) setStep(1);
+  else render();
+});
+
+document.querySelectorAll(".choice[data-for]").forEach((group) => {
+  const select = $(group.dataset.for);
+  if (!select) return;
+  group.querySelectorAll("button[data-value]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (select.disabled) return;
+      select.value = button.dataset.value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      syncChoiceGroup(group, select.value);
+    });
+  });
+});
+
+$("size-presets")?.querySelectorAll("button[data-w]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.parkWidth = Number(button.dataset.w);
+    state.parkDepth = Number(button.dataset.d);
+    render();
+  });
+});
+
+$("floor-height-choice")?.querySelectorAll("button[data-value]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.floorHeight = Number(button.dataset.value);
+    render();
+  });
+});
+
+$("site-type-choice")?.querySelectorAll("button[data-value]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const radio = document.querySelector(`input[name="site-type"][value="${button.dataset.value}"]`);
+    if (!radio) return;
+    radio.checked = true;
+    radio.dispatchEvent(new Event("change", { bubbles: true }));
+  });
 });
 
 document.querySelectorAll("#tools button").forEach((button) => {
@@ -377,7 +444,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=249")
+    sceneMount = import("./scene.js?v=251")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -398,8 +465,46 @@ async function open3d() {
   }
 }
 
+function syncChoiceGroup(group, value) {
+  group.querySelectorAll("button[data-value]").forEach((button) => {
+    button.classList.toggle("on", button.dataset.value === String(value));
+  });
+}
+
+function syncChoiceButtons() {
+  document.querySelectorAll(".choice[data-for]").forEach((group) => {
+    const select = $(group.dataset.for);
+    if (!select) return;
+    syncChoiceGroup(group, select.value);
+    group.querySelectorAll("button[data-value]").forEach((button) => {
+      button.disabled = select.disabled;
+    });
+  });
+  const sizeGroup = $("size-presets");
+  if (sizeGroup) {
+    sizeGroup.querySelectorAll("button[data-w]").forEach((button) => {
+      const on = Number(button.dataset.w) === Number(state.parkWidth)
+        && Number(button.dataset.d) === Number(state.parkDepth);
+      button.classList.toggle("on", on);
+    });
+  }
+  const floorGroup = $("floor-height-choice");
+  if (floorGroup) {
+    const fh = Number(state.floorHeight);
+    floorGroup.querySelectorAll("button[data-value]").forEach((button) => {
+      button.classList.toggle("on", Math.abs(Number(button.dataset.value) - fh) < 1e-6);
+    });
+  }
+  const siteGroup = $("site-type-choice");
+  if (siteGroup) syncChoiceGroup(siteGroup, state.siteType);
+}
+
 function render() {
   const step = state.step;
+  if (step === 2) planExpanded = true;
+  if (step === 3) planExpanded = false;
+  document.body.classList.toggle("plan-expanded", planExpanded && step !== 3);
+  document.body.classList.toggle("step-result", step === 3);
   document.querySelectorAll(".pane").forEach((pane) => {
     pane.hidden = Number(pane.dataset.pane) !== step;
   });
@@ -485,6 +590,7 @@ function render() {
   if (document.activeElement !== $("entrance-mode")) $("entrance-mode").value = state.entranceMode;
   if (document.activeElement !== $("circulation")) $("circulation").value = state.circulation;
   if (document.activeElement !== $("project-name")) $("project-name").value = state.demand.projectName;
+  syncChoiceButtons();
 
   const info = summary();
   renderDemand(info);

@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=249" />
+    <link rel="stylesheet" href="styles.css?v=251" />
     <script type="importmap">
       {
         "imports": {
@@ -18,22 +18,79 @@
       <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
     <script src="vendor/leaflet/leaflet.js"></script>
   </head>
-  <body>
-    <aside class="panel">
-      <header class="brand">
-        <p class="eyebrow">개략 설계</p>
+  <body class="app">
+    <header class="topbar">
+      <div class="brand-inline">
         <h1>주차장 설계</h1>
-        <p class="sub">조건을 넣으면 외곽 주차, 순환 차로, 내부 베이 순으로 여러 배치안을 만들고 최적안을 고릅니다.</p>
-      </header>
-
+        <p class="eyebrow">개략 설계</p>
+      </div>
       <ol class="steps" id="steps">
         <li data-step="1"><span>1</span>조건</li>
         <li data-step="2"><span>2</span>평면</li>
         <li data-step="3"><span>3</span>결과</li>
       </ol>
+    </header>
 
+    <div class="shell">
+    <main class="stage">
+      <div id="plan-view">
+        <button type="button" id="plan-expand-hit" class="plan-expand-hit">클릭하여 확대 · 램프·코어 조정</button>
+        <div class="toolbar">
+          <button id="collapse-plan" type="button" class="ghost tiny">접기</button>
+          <span id="status">주차장 가로, 세로, 기둥 간격을 입력한 뒤 평면을 만드세요.</span>
+          <span id="readout"></span>
+          <div class="toolbar-actions">
+            <button id="play-build" type="button" class="ghost tiny">생성 과정 보기</button>
+            <button id="show-conflicts" type="button" class="ghost tiny">충돌 칸</button>
+            <button id="fit" type="button" class="ghost tiny">맞춤</button>
+          </div>
+        </div>
+        <div id="compare-dock" hidden></div>
+        <canvas id="plan"></canvas>
+        <div id="plan-alert" class="plan-alert" hidden></div>
+      </div>
+      <div id="sheet-view" hidden>
+        <canvas id="sheet"></canvas>
+      </div>
+      <div id="scene-view" hidden>
+        <div id="scene-root"></div>
+        <ul class="legend">
+          <li><i class="swatch stall"></i>주차구획</li>
+          <li><i class="swatch extended"></i>확장형</li>
+          <li><i class="swatch disabled"></i>장애인</li>
+          <li><i class="swatch eco"></i>친환경차</li>
+          <li><i class="swatch parallel"></i>평행주차</li>
+          <li><i class="swatch column"></i>기둥</li>
+          <li><i class="swatch core"></i>코어</li>
+          <li><i class="swatch ramp"></i>램프</li>
+          <li><i class="swatch aisle"></i>차로</li>
+          <li><i class="swatch entrance"></i>입구</li>
+          <li><i class="swatch exit"></i>출구</li>
+        </ul>
+      </div>
+      <div id="context-view" class="context-view" hidden>
+        <div class="cx-head">
+          <h3 id="context-title">주변 매스</h3>
+          <div class="cx-modes">
+            <span id="context-area" class="hint cx-area"></span>
+            <button type="button" id="context-mode-map" class="ghost tiny">지도</button>
+            <button type="button" id="context-mode-2d" class="ghost tiny">2D</button>
+            <button type="button" id="context-mode-3d" class="ghost tiny">3D</button>
+            <button type="button" id="context-close" class="ghost tiny">닫기</button>
+          </div>
+        </div>
+        <p id="context-status" class="hint"></p>
+        <div id="context-map" class="cx-view"></div>
+        <div id="context-2d" class="cx-view" hidden></div>
+        <div id="context-3d" class="cx-view" hidden></div>
+        <p class="hint">지도: 왼쪽 드래그 = 영역 선택 · 오른쪽 드래그 = 이동 · 주황 = 대지 · 2D 배경 = 브이월드 지도 · 회색 = 건물(진할수록 높음) · 2D: 휠 확대 · 드래그 이동 · 더블클릭 처음 화면 · 건물에 마우스를 올리면 이름·층수·높이 · 3D는 끌어서 회전, 휠로 확대</p>
+      </div>
+    </main>
+
+    <aside class="panel form-rail">
       <section class="pane" data-pane="1">
-        <h2>초기 입력</h2>
+        <h2>조건 입력</h2>
+        <p class="hint">왼쪽 미리보기로 형태를 확인하고, 램프·코어 조정은 미리보기를 클릭해 확대하세요.</p>
         <label>
           프로젝트명
           <input id="project-name" type="text" value="주차장 개략 설계" />
@@ -92,8 +149,12 @@
         <p class="hint" id="suggest-note"></p>
         <fieldset class="site-type">
           <legend>건물 형태</legend>
-          <label class="check"><input type="radio" name="site-type" value="single" checked /> 단일 건물</label>
-          <label class="check"><input type="radio" name="site-type" value="complex" /> 단지형 (여러 동 + 지하주차장 1개)</label>
+          <div class="choice" id="site-type-choice" role="group" aria-label="건물 형태">
+            <button type="button" data-value="single" class="on">단일 건물</button>
+            <button type="button" data-value="complex">단지형</button>
+          </div>
+          <label class="check" hidden><input type="radio" name="site-type" value="single" checked /> 단일 건물</label>
+          <label class="check" hidden><input type="radio" name="site-type" value="complex" /> 단지형 (여러 동 + 지하주차장 1개)</label>
           <p id="complex-hint" class="hint" hidden>법정 주차대수는 <strong>단지 전체 세대수</strong>로 계산합니다. 동은 위치·층수·외곽만 입력합니다. 지상공원형(지하 차로 2.7m)·<strong>내부 램프</strong>를 기본으로 켭니다. 동 3개 이상은 평면 약 80×58m 이상을 권장합니다.</p>
           <div id="building-list-wrap" hidden>
             <table id="building-table" class="building-table">
@@ -105,13 +166,20 @@
             <button type="button" id="add-building" class="ghost tiny">동 추가</button>
           </div>
         </fieldset>
+        <p class="section-label">주차장 크기</p>
+        <div class="choice compact" id="size-presets" role="group" aria-label="크기 프리셋">
+          <button type="button" data-w="48" data-d="42">48×42</button>
+          <button type="button" data-w="60" data-d="50">60×50</button>
+          <button type="button" data-w="80" data-d="58">80×58</button>
+          <button type="button" data-w="98" data-d="66">98×66</button>
+        </div>
         <div class="split">
           <label>
-            주차장 가로 (m) <span class="info" tabindex="0" title="주차장(지하 외벽 안쪽) 크기. 모르면 위 '법정 대수로 크기 추천'으로 채운 뒤 고쳐 쓰세요.">ⓘ</span>
+            가로 (m) <span class="info" tabindex="0" title="주차장(지하 외벽 안쪽) 크기. 모르면 위 '법정 대수로 크기 추천'으로 채운 뒤 고쳐 쓰세요.">ⓘ</span>
             <input id="park-width" type="number" min="18" step="0.1" value="48" />
           </label>
           <label>
-            주차장 세로 (m)
+            세로 (m)
             <input id="park-depth" type="number" min="18" step="0.1" value="42" />
           </label>
         </div>
@@ -194,66 +262,93 @@
           <p class="hint">주차장법 시행규칙 제3조①1: 평행주차형식 일반형 2.0×6.0m 이상. 직각 칸이 못 들어가는 차로 옆 빈 띠(폭 2m 이상)에 차로와 나란히 넣습니다. 확장형 30%는 평행 칸을 뺀 칸 수 기준.</p>
           <div class="dialog-actions"><button type="button" id="close-disabled-dialog">확인</button></div>
         </dialog>
-        <div class="split">
-          <label>
-            층고 (m)
-            <input id="floor-height" type="number" min="2.6" max="6" step="0.05" value="3.2" />
-          </label>
-          <p id="clear-readout" class="hint">차로 유효높이 2.3m 이상</p>
+        <div class="field">
+          <span class="field-label">층고 (m)</span>
+          <div class="choice compact" id="floor-height-choice" role="group" aria-label="층고">
+            <button type="button" data-value="2.7">2.7</button>
+            <button type="button" data-value="3.0">3.0</button>
+            <button type="button" data-value="3.2" class="on">3.2</button>
+            <button type="button" data-value="3.5">3.5</button>
+          </div>
+          <div class="split">
+            <label>
+              직접 입력
+              <input id="floor-height" type="number" min="2.6" max="6" step="0.05" value="3.2" />
+            </label>
+            <p id="clear-readout" class="hint">차로 유효높이 2.3m 이상</p>
+          </div>
         </div>
         <label class="check" id="ground-access-row">
           <input id="no-ground-access" type="checkbox" checked />
           지상공원형 단지 (지상에 차 없음) → 지하 차로 2.7m <span class="info" tabindex="0" title="차가 지하로만 다니는 단지는 택배차가 지하로 들어가야 해서 차로 2.7m 이상(주택건설기준 규칙 제6조의2). 지상 도로로 동 앞까지 갈 수 있으면 체크 해제(2.3m).">ⓘ</span>
         </label>
-        <div class="split">
-          <label>
-            도로 접한 변
-            <select id="road-edge">
-              <option value="s">남측 (아래)</option>
-              <option value="n">북측 (위)</option>
-              <option value="w">서측 (왼쪽)</option>
-              <option value="e">동측 (오른쪽)</option>
-            </select>
-          </label>
-          <label>
-            램프 위치 <span class="info" tabindex="0" title="램프는 도로에서 바로 들어오므로 도로 접한 변에 둡니다. 자동은 양 끝·가운데를 모두 짜 보고 대수가 가장 많은 곳을 고릅니다. 도로변 3m는 경사 8.5% 이하로 자동 반영.">ⓘ</span>
-            <select id="ramp-pos"></select>
-          </label>
+        <div class="field">
+          <span class="field-label">도로 접한 변</span>
+          <div class="choice" data-for="road-edge" role="group">
+            <button type="button" data-value="s" class="on">남</button>
+            <button type="button" data-value="n">북</button>
+            <button type="button" data-value="w">서</button>
+            <button type="button" data-value="e">동</button>
+          </div>
+          <select id="road-edge" class="choice-source" tabindex="-1" aria-hidden="true">
+            <option value="s">남측 (아래)</option>
+            <option value="n">북측 (위)</option>
+            <option value="w">서측 (왼쪽)</option>
+            <option value="e">동측 (오른쪽)</option>
+          </select>
+        </div>
+        <div class="field">
+          <span class="field-label">램프 위치 <span class="info" tabindex="0" title="램프는 도로에서 바로 들어오므로 도로 접한 변에 둡니다. 자동은 양 끝·가운데를 모두 짜 보고 대수가 가장 많은 곳을 고릅니다. 도로변 3m는 경사 8.5% 이하로 자동 반영.">ⓘ</span></span>
+          <select id="ramp-pos"></select>
         </div>
         <p id="ramp-pos-note" class="hint warn"></p>
-        <div class="split">
-          <label>
-            램프 배치
-            <select id="ramp-placement">
-              <option value="internal">내부형</option>
-              <option value="external">외부형</option>
-            </select>
-          </label>
-          <label>
-            출입구
-            <select id="entrance-mode">
-              <option value="separate">분리</option>
-              <option value="integrated">램프 일체형</option>
-            </select>
-          </label>
+        <div class="field">
+          <span class="field-label">램프 배치</span>
+          <div class="choice" data-for="ramp-placement" role="group">
+            <button type="button" data-value="internal" class="on">내부형</button>
+            <button type="button" data-value="external">외부형</button>
+          </div>
+          <select id="ramp-placement" class="choice-source" tabindex="-1" aria-hidden="true">
+            <option value="internal">내부형</option>
+            <option value="external">외부형</option>
+          </select>
         </div>
-        <div class="split">
-          <label>
-            램프 형태 <span class="info" tabindex="0" title="주차장법 시행규칙 제6조①5: 곡선 내변반경 6m 이상(50대 이하 5m), 곡선 2차로 6.5m, 직선 경사 17%·곡선 14%, 도로변 3m는 직선 8.5%·곡선 7%. 자동은 깊이에 따라 직선/90° 곡선을 고릅니다.">ⓘ</span>
-            <select id="ramp-form">
-              <option value="auto">자동 (직선/90°)</option>
-              <option value="straight">직선</option>
-              <option value="curve90">90° 곡선</option>
-              <option value="spiral">외곽 회전 (가장자리)</option>
-            </select>
-          </label>
-          <label>
-            지하 2층+ 경로 <span class="info" tabindex="0" title="지상→B1 램프와 달리, B1→B2 이하는 반대쪽 변 내부 램프로 내려가도록 그립니다. '전 층 동일'은 예전처럼 같은 XY를 반복합니다. 외곽 회전 램프는 같은 가장자리 경로로 연속합니다.">ⓘ</span>
-            <select id="lower-ramp-mode">
-              <option value="alternate">다른 경로 (권장)</option>
-              <option value="same">전 층 동일</option>
-            </select>
-          </label>
+        <div class="field">
+          <span class="field-label">출입구</span>
+          <div class="choice" data-for="entrance-mode" role="group">
+            <button type="button" data-value="separate" class="on">분리</button>
+            <button type="button" data-value="integrated">램프 일체형</button>
+          </div>
+          <select id="entrance-mode" class="choice-source" tabindex="-1" aria-hidden="true">
+            <option value="separate">분리</option>
+            <option value="integrated">램프 일체형</option>
+          </select>
+        </div>
+        <div class="field">
+          <span class="field-label">램프 형태 <span class="info" tabindex="0" title="주차장법 시행규칙 제6조①5: 곡선 내변반경 6m 이상(50대 이하 5m), 곡선 2차로 6.5m, 직선 경사 17%·곡선 14%, 도로변 3m는 직선 8.5%·곡선 7%. 자동은 깊이에 따라 직선/90° 곡선을 고릅니다.">ⓘ</span></span>
+          <div class="choice" data-for="ramp-form" role="group">
+            <button type="button" data-value="auto" class="on">자동</button>
+            <button type="button" data-value="straight">직선</button>
+            <button type="button" data-value="curve90">90° 곡선</button>
+            <button type="button" data-value="spiral">외곽 회전</button>
+          </div>
+          <select id="ramp-form" class="choice-source" tabindex="-1" aria-hidden="true">
+            <option value="auto">자동 (직선/90°)</option>
+            <option value="straight">직선</option>
+            <option value="curve90">90° 곡선</option>
+            <option value="spiral">외곽 회전 (가장자리)</option>
+          </select>
+        </div>
+        <div class="field">
+          <span class="field-label">지하 2층+ 경로 <span class="info" tabindex="0" title="지상→B1 램프와 달리, B1→B2 이하는 반대쪽 변 내부 램프로 내려가도록 그립니다. '전 층 동일'은 예전처럼 같은 XY를 반복합니다. 외곽 회전 램프는 같은 가장자리 경로로 연속합니다.">ⓘ</span></span>
+          <div class="choice" data-for="lower-ramp-mode" role="group">
+            <button type="button" data-value="alternate" class="on">다른 경로</button>
+            <button type="button" data-value="same">전 층 동일</button>
+          </div>
+          <select id="lower-ramp-mode" class="choice-source" tabindex="-1" aria-hidden="true">
+            <option value="alternate">다른 경로 (권장)</option>
+            <option value="same">전 층 동일</option>
+          </select>
         </div>
         <div id="site-margin-row">
           <label>
@@ -293,7 +388,7 @@
 
       <section class="pane" data-pane="2" hidden>
         <h2>평면에서 확정</h2>
-        <p class="hint">배치안을 고르면 그 평면으로 3단계에 갑니다. 코어·램프·출입구는 바로 끌어 옮기고, 빈 곳을 끌면 화면이 움직입니다(휠로 확대). 램프 일체형 출입구는 램프와 함께 움직입니다.</p>
+        <p class="hint">왼쪽 확대 평면에서 코어·램프·출입구를 끌어 옮기세요. 빈 곳 드래그=이동, 휠=확대.</p>
         <div id="reference-notes" class="hint"></div>
         <div class="tools" id="tools">
           <button type="button" data-tool="entrance">입구 추가</button>
@@ -463,62 +558,12 @@
       <p class="note">
         주차칸 일반 2.5×5.0m · 확장형 2.6×5.2m(50대 이상 30%, 이때 줄 깊이 5.2m), 직각 차로 6m, 직선 램프 17% 이하, 차로 높이 2.3m 이상.
         법정 대수는 주택건설기준 제27조와 주차장법 시행령 별표 1의 개략값입니다.
-        <br /><span class="hint">버전 2026-11-10 · r240</span>
+        <br /><span class="hint">버전 2026-11-21 · r251</span>
       </p>
     </aside>
+    </div>
 
-    <main>
-      <div id="plan-view">
-        <div class="toolbar">
-          <span id="status">주차장 가로, 세로, 기둥 간격을 입력한 뒤 평면을 만드세요.</span>
-          <span id="readout"></span>
-          <button id="play-build" type="button" class="ghost tiny">생성 과정 보기</button>
-          <button id="show-conflicts" type="button" class="ghost tiny">충돌 칸</button>
-          <button id="fit" type="button" class="ghost tiny">맞춤</button>
-        </div>
-        <div id="compare-dock" hidden></div>
-        <canvas id="plan"></canvas>
-        <div id="plan-alert" class="plan-alert" hidden></div>
-      </div>
-      <div id="sheet-view" hidden>
-        <canvas id="sheet"></canvas>
-      </div>
-      <div id="scene-view" hidden>
-        <div id="scene-root"></div>
-        <ul class="legend">
-          <li><i class="swatch stall"></i>주차구획</li>
-          <li><i class="swatch extended"></i>확장형</li>
-          <li><i class="swatch disabled"></i>장애인</li>
-          <li><i class="swatch eco"></i>친환경차</li>
-          <li><i class="swatch parallel"></i>평행주차</li>
-          <li><i class="swatch column"></i>기둥</li>
-          <li><i class="swatch core"></i>코어</li>
-          <li><i class="swatch ramp"></i>램프</li>
-          <li><i class="swatch aisle"></i>차로</li>
-          <li><i class="swatch entrance"></i>입구</li>
-          <li><i class="swatch exit"></i>출구</li>
-        </ul>
-      </div>
-      <div id="context-view" class="context-view" hidden>
-        <div class="cx-head">
-          <h3 id="context-title">주변 매스</h3>
-          <div class="cx-modes">
-            <span id="context-area" class="hint cx-area"></span>
-            <button type="button" id="context-mode-map" class="ghost tiny">지도</button>
-            <button type="button" id="context-mode-2d" class="ghost tiny">2D</button>
-            <button type="button" id="context-mode-3d" class="ghost tiny">3D</button>
-            <button type="button" id="context-close" class="ghost tiny">닫기</button>
-          </div>
-        </div>
-        <p id="context-status" class="hint"></p>
-        <div id="context-map" class="cx-view"></div>
-        <div id="context-2d" class="cx-view" hidden></div>
-        <div id="context-3d" class="cx-view" hidden></div>
-        <p class="hint">지도: 왼쪽 드래그 = 영역 선택 · 오른쪽 드래그 = 이동 · 주황 = 대지 · 2D 배경 = 브이월드 지도 · 회색 = 건물(진할수록 높음) · 2D: 휠 확대 · 드래그 이동 · 더블클릭 처음 화면 · 건물에 마우스를 올리면 이름·층수·높이 · 3D는 끌어서 회전, 휠로 확대</p>
-      </div>
-    </main>
-
-    <script type="module" src="src/main.js?v=249"></script>
+    <script type="module" src="src/main.js?v=251"></script>
       <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>
