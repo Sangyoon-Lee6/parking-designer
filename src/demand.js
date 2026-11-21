@@ -5,7 +5,8 @@ import {
   housingMinimumPerUnit,
   uses,
   zoneFactors,
-} from "./parkingRules.js?v=82";
+  zoneUseStatus,
+} from "./parkingRules.js?v=240";
 
 export function emptyDemand() {
   return {
@@ -36,6 +37,8 @@ export function emptyDemand() {
     },
   };
 }
+
+const ECO_PUBLIC_USES = ["office", "retail", "lodging", "culture", "medical", "amusement"];
 
 function round1(value) {
   return Math.round(value * 10) / 10;
@@ -77,32 +80,38 @@ function detachedRaw(area) {
 }
 
 /** 별표 1 비고 6. 합이 1 미만이면 0, 아니면 0.5 이상은 올린다. */
+// 주차장법 시행령 별표1 비고6: 총 1대 미만이면 0, 소수점 이하 0.5 이상이면 1대로 본다.
+// (수정 2026-11-10) 전에는 소수 첫째 자리로 먼저 반올림해서 0.96→1대, 1.46→2대로 잘못 나왔다.
 export function roundFacility(raw) {
-  const tenths = round1(raw);
-  if (tenths < 1) return 0;
-  const whole = Math.floor(tenths + 1e-9);
-  const fraction = tenths - whole;
-  return fraction >= 0.5 - 1e-9 ? whole + 1 : whole;
+  if (!(raw >= 1 - 1e-9)) return 0;
+  const whole = Math.floor(raw + 1e-9);
+  return raw - whole >= 0.5 - 1e-9 ? whole + 1 : whole;
 }
 
 export function calculateDemand(demand, plate, spacing = 8) {
   const source = demand || emptyDemand();
   const zone = zoneFactors[source.zone] || zoneFactors.general2;
   const typed = Number(source.ordinance);
-  const ordinance = Number.isFinite(typed) && typed > 0 ? typed : 0.05;
+  // 주차장법 시행령 제6조②: ½ 범위 → 0.5~1.5
+  const ordinance = Number.isFinite(typed) ? Math.min(1.5, Math.max(0.5, typed)) : 1;
   const factor = ordinance * zone.factor;
   const rows = [];
   let households = 0;
   let housingSum = 0;
   let facilityRaw = 0;
+  let aptHouseholds = 0;
+  const publicUses = [];
 
   for (const use of uses) {
     if (!source.active?.[use.id]) continue;
+    // 이 용도지역에 지을 수 없는 용도는 계산에서 뺀다(화면에서도 숨김).
+    if (zoneUseStatus(source.zone, use.id, source.region).s === "no") continue;
     if (use.kind === "housing") {
       const result = housingRaw(source.bands?.[use.id] || [], source.region);
       const scaled = result.raw * factor;
       const stalls = scaled <= 0 ? 0 : Math.ceil(scaled - 1e-9);
       households += use.id === "officetel" ? 0 : result.households;
+      if (use.id === "apartment") aptHouseholds += result.households;
       housingSum += stalls;
       rows.push({
         use: use.label,
@@ -124,6 +133,7 @@ export function calculateDemand(demand, plate, spacing = 8) {
       });
     } else {
       const area = Math.max(0, Number(source.areas?.[use.id]) || 0);
+      if (area > 0 && ECO_PUBLIC_USES.includes(use.id)) publicUses.push(use.label);
       const raw = (area / use.per) * factor;
       facilityRaw += raw;
       rows.push({
@@ -145,10 +155,17 @@ export function calculateDemand(demand, plate, spacing = 8) {
   const floorArea = legalStalls ? totalArea / plannedFloors : 0;
   const actualArea = plate ? plate.width * plate.depth : 0;
   const neededFloors = actualArea > 0 && legalStalls ? Math.max(1, Math.ceil(totalArea / actualArea)) : plannedFloors;
+  // 친환경차 전용주차구역 대상(친환경자동차법 시행령 제18조의5): 총주차대수 50대 이상 +
+  // 100세대 이상 아파트 또는 공중이용시설(업무·판매·숙박·문화·의료·위락). 근생·오피스텔·연립·다세대만이면 대상 아님.
+  const ecoBasis = aptHouseholds >= 100 ? `공동주택 ${aptHouseholds}세대` : publicUses.length ? publicUses.join("·") : "";
+  const ecoAuto = legalStalls >= 50 && Boolean(ecoBasis);
   return {
     rows,
     legalStalls,
     households,
+    aptHouseholds,
+    ecoAuto,
+    ecoBasis,
     areaPerStall,
     totalArea,
     plannedFloors,
@@ -170,5 +187,5 @@ export function recommendPlate(floorArea, spacing) {
   const short = floorArea / long;
   const baysLong = Math.max(3, Math.ceil(long / step));
   const baysShort = Math.max(3, Math.ceil(short / step));
-  return { width: baysLong * step, depth: baysShort * step };
+  return { width: Math.round(baysLong * step * 10) / 10, depth: Math.round(baysShort * step * 10) / 10 };
 }

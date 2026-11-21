@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=82";
+import { calculateDemand, emptyDemand } from "./demand.js?v=240";
 import {
   basementCount,
   clampCore,
@@ -9,7 +9,7 @@ import {
   intervalsOverlap,
   layoutParking,
   referenceCase,
-} from "./layout.js?v=84";
+} from "./layout.js?v=240";
 
 export const state = {
   step: 1,
@@ -22,14 +22,32 @@ export const state = {
   columnSpacing: 8.1,
   columnWidth: 0.5,
   columnDepth: 0.5,
-  minClear: 0.05,
+  minClear: 0,
   siteMargin: 20,
+  siteMargins: { n: null, s: null, e: null, w: null },
+  floorHeight: 3.2,
+  spansX: "",
+  spansY: "",
+  trimDeadEnds: true,
+  wallColumns: "front",
+  noGroundAccess: false,
+  roadEdge: "w",
+  rampPos: "auto",
+  stallRules: {
+    disabled: true,
+    disabledRate: 0.04,
+    parallel: true,
+    ecoMode: "auto",
+    ecoRate: 0.05,
+  },
+  coreAuto: true,
+  coreSearch: null,
   rampPlacement: "internal",
   entranceMode: "separate",
   circulation: "ccw",
   entranceWidth: 6,
   rampWidth: 6,
-  rampLength: 18.9,
+  rampLength: 20.4,
   plate: null,
   columns: [],
   stalls: [],
@@ -74,7 +92,10 @@ export function emit() {
   listeners.forEach((listener) => listener());
 }
 
-function plateFromState() {
+export function plateFromState() {
+  const rules = currentStallRules();
+  const spansX = parseSpans(state.spansX);
+  const spansY = parseSpans(state.spansY);
   return {
     width: round1(state.parkWidth),
     depth: round1(state.parkDepth),
@@ -83,8 +104,96 @@ function plateFromState() {
     columnDepth: round1(state.columnDepth),
     minClear: round1(state.minClear * 100) / 100,
     siteMargin: round1(state.siteMargin),
+    siteMargins: { ...(state.siteMargins || {}) },
+    floorHeight: round1(state.floorHeight),
+    spansX: spansX.values,
+    spansY: spansY.values,
+    trimDeadEnds: Boolean(state.trimDeadEnds),
+    wallColumns: state.wallColumns || "front",
+    noGroundAccess: Boolean(state.noGroundAccess),
+    roadEdge: state.roadEdge || "w",
+    rampPos: state.rampPos || "auto",
     rampPlacement: state.rampPlacement,
+    legalStalls: rules.legalStalls,
+    stallRules: rules,
   };
+}
+
+/** "4, 5, 6" → 숫자 배열. 비우면 null(기존 단일 간격). 3~15m 밖이면 error */
+export function parseSpans(text) {
+  const raw = String(text ?? "").trim();
+  if (!raw) return { values: null, error: null };
+  const parts = raw.split(/[,，\s]+/).filter(Boolean);
+  const values = [];
+  for (const part of parts) {
+    const n = Number(part);
+    if (!Number.isFinite(n)) return { values: null, error: `"${part}"는 숫자가 아닙니다` };
+    if (n < 3 || n > 15) return { values: null, error: `${n}m는 3~15m 범위 밖입니다` };
+    values.push(n);
+  }
+  return { values, error: null };
+}
+
+export function currentStallRules() {
+  const demand = demandResult();
+  const base = { ...(state.stallRules || {}) };
+  const legalStalls = demand.legalStalls || 0;
+  const ecoAuto = Boolean(demand.ecoAuto);
+  return {
+    ...base,
+    legalStalls,
+    ecoAuto,
+    ecoBasis: demand.ecoBasis || "",
+    disabledRate: Number(base.disabledRate) || 0.04,
+    ecoRate: Number(base.ecoRate) || 0.05,
+    parallel: base.parallel !== false,
+  };
+}
+
+export function updateSiteMargins(all, partial) {
+  if (all != null && Number.isFinite(Number(all))) {
+    state.siteMargin = Math.max(0, Number(all));
+  }
+  if (partial && typeof partial === "object") {
+    state.siteMargins = { ...(state.siteMargins || {}), ...partial };
+  }
+  emit();
+}
+
+export function issueGroups() {
+  const errors = [];
+  const warnings = [];
+  for (const issue of state.issues || []) {
+    const label = issue.label || issue.message || String(issue.type || issue);
+    if (issue.type === "notice" || issue.type === "warn" || issue.type === "roadless") warnings.push(label);
+    else errors.push(label);
+  }
+  if (state.metrics && state.metrics.columnHits > 0) {
+    errors.push(`기둥이 주차칸과 ${state.metrics.columnHits}곳 겹칩니다.`);
+  }
+  if (state.plate && !state.connected) {
+    errors.push("차로가 하나로 이어지지 않거나 배치가 유효하지 않습니다.");
+  }
+  return { errors, warnings };
+}
+
+export function rampFallback(plate) {
+  // 도로변 내부 램프가 전부 불가일 때 옆 변 끝 후보(원본 휴리스틱의 축소판)
+  if (!plate) return null;
+  const edge = plate.roadEdge || state.roadEdge || "w";
+  const side = edge === "n" || edge === "s" ? "w" : "s";
+  return { edge: side, t: 8, note: "도로 쪽 끝" };
+}
+
+export function autoPlaceCore() {
+  if (!state.plate) return;
+  const core = defaultCore(state.plate);
+  state.cores = [clampCore(core, state.plate)];
+  state.coreIndex = 0;
+  syncCore();
+  state.coreAuto = true;
+  rebuildLayout();
+  emit();
 }
 
 function syncCore() {

@@ -291,7 +291,11 @@ main { position: relative; min-width: 0; min-height: 100%; }
 .swatch.ramp { background: var(--ramp); }
 .swatch.entrance { background: var(--entrance); }
 .swatch.exit { background: var(--accent); }
-.swatch.aisle { background: #c9a36a; }
+.swatch.aisle { background: #2f6b45; }
+.swatch.extended { background: #9cc39a; }
+.swatch.disabled { background: #3d6fb6; }
+.swatch.eco { background: #d8bf4f; }
+.swatch.parallel { background: #a99bc4; }
 
 .picks {
   list-style: none;
@@ -354,3 +358,120 @@ main { position: relative; min-width: 0; min-height: 100%; }
   }
   main { height: 100%; min-height: 0; }
 }
+
+/* 잘못 입력한 칸 표시 (추가 2026-11-10) */
+input.bad { border-color: #b42318; background: #fdecea; }
+.check { justify-content: flex-start; text-align: left; }
+.check input { width: auto; flex: none; }
+
+.zone-tag { font-size: 11px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; }
+.zone-tag.ord { background: #fbeed3; color: #7a4b00; }
+.zone-note { font-size: 11px; color: #8a7f72; margin-left: 4px; }
+
+.use-card { border: 1px solid #e3dccf; border-radius: 10px; padding: 8px 10px; margin: 8px 0; background: #fbf9f5; }
+.use-head { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+.use-head .use-del { margin-left: auto; min-width: 28px; padding: 2px 8px; }
+.zone-tag.seoul { background: #e3eef9; color: #1d4e89; }
+
+details.advanced { margin: 8px 0; }
+details.advanced summary { cursor: pointer; color: #6b6156; font-size: 13px; }
+
+.column-row { align-items: end; }
+.column-row button { align-self: end; margin-bottom: 2px; }
+.settings-dialog { border: 1px solid #e3dccf; border-radius: 14px; padding: 18px 20px; max-width: 420px; width: 92vw; background: #fbf9f5; }
+.settings-dialog::backdrop { background: rgba(30, 24, 18, 0.35); }
+.settings-dialog h3 { margin: 0 0 10px; font-size: 16px; }
+.dialog-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+#demand-summary { margin: 0; align-self: center; }
+.example-row { margin-top: 12px; padding-top: 10px; border-top: 1px dashed rgba(0,0,0,0.15); }
+.compare-card .tag.max { color: #2f7d4f; }
+.compare-card .tag.uniform { color: #3d6fb6; }
+.hint.warn { color: #b4401c; }
+.hint.warn:empty { display: none; }
+/* ⓘ 설명: 마우스를 올리거나 눌러 포커스하면 말풍선 */
+.info { position: relative; display: inline-block; margin-left: 4px; color: #8a7f70; cursor: help; font-size: 0.85em; font-weight: 400; }
+
+.hint.small { font-size: 11px; opacity: 0.8; }
+label { position: relative; }
+label > .info { position: absolute; top: 0; right: 0; margin: 0; }
+label.check > .info { position: static; margin-left: 4px; }
+/* 3D 범례 색을 3D 재질 색과 맞춤 */
+#scene-view .swatch.stall { background: #b7b4ae; }
+#scene-view .swatch.column { background: #8d887f; }
+#scene-view .swatch.core { background: #cfc8be; }
+#scene-view .swatch.ramp { background: #8d8680; }
+#scene-view .swatch.entrance { background: #1f6b62; }
+#scene-view .swatch.exit { background: #b5522a; }
+
+/* 생성 중 표시 */
+.busy { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: rgba(240, 236, 228, 0.55); backdrop-filter: blur(1px); cursor: progress; }
+.busy[hidden] { display: none; }
+.busy-box { display: flex; align-items: center; gap: 12px; padding: 16px 22px; border-radius: 14px; background: #fffdf8; box-shadow: 0 6px 24px rgba(0,0,0,0.12); font-size: 15px; color: #222; }
+.spinner { width: 20px; height: 20px; border-radius: 50%; border: 3px solid #d9d2c3; border-top-color: #2b3a2f; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+body.is-busy { cursor: progress; }
+
+/* 평면 단계 문제 표시 */
+.issue-box { margin: 10px 0 0; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.5; }
+.issue-box ul { margin: 4px 0 0; padding-left: 18px; }
+.issue-box.error { background: #fbe9e6; color: #8a2a1c; border: 1px solid #efc2b9; }
+.issue-box.warn { background: #fdf4dc; color: #6b5310; border: 1px solid #ecd9a0; }
+
+/* 평면 위 알림(오른쪽 아래): 3D 불가 원인 / 주의 */
+.plan-alert { position: absolute; right: 16px; bottom: 16px; max-width: 420px; display: grid; gap: 8px; z-index: 5; pointer-events: none; }
+.plan-alert[hidden] { display: none; }
+.plan-alert .issue-box { margin: 0; box-shadow: 0 4px 16px rgba(0,0,0,0.10); }
+
+/* 공동주택 세대 구간: 세대수 · 전용면적 · 삭제(×) */
+.band-row { display: grid; grid-template-columns: 1fr 1fr 32px; gap: 8px; align-items: end; }
+.band-row .band-del { min-width: 28px; padding: 6px 0; margin-bottom: 4px; }
+input[readonly] { background: #efebe3; color: #555; cursor: default; }
+.addr-row { display: flex; gap: 6px; align-items: center; }
+.addr-row input { flex: 1; min-width: 0; }
+.zone-result { margin: 4px 0 10px; padding: 8px 10px; border-radius: 8px; background: #eef3ea; font-size: 12.5px; line-height: 1.5; }
+.zone-result.warn { background: #fbf1dc; }
+.zone-result p { margin: 0; }
+.zone-result ul { margin: 4px 0; padding-left: 18px; }
+.zone-result .note { color: #6b6b6b; font-size: 11.5px; }
+.zone-auto { margin: -4px 0 8px; display: flex; align-items: center; gap: 8px; color: #3d6b35; }
+select:disabled { background: #efebe3; color: #333; opacity: 1; }
+.zone-detail { margin: 0 0 8px; padding: 8px 10px; border: 1px dashed #cfc6b6; border-radius: 8px; }
+#zone-current { margin: 0; }
+.context-view { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; background: #f3efe7; }
+.context-view[hidden] { display: none; }
+.cx-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.cx-head h3 { margin: 0; font-size: 16px; }
+.cx-modes { display: flex; gap: 6px; }
+.cx-modes .on { background: #2b2620; color: #fff; }
+.cx-view { width: 100%; flex: 1; min-height: 0; border-radius: 10px; overflow: hidden; background: #f8f5ef; }
+.cx-view[hidden] { display: none; }
+.context-view > p { margin: 0; }
+.cx-svg { width: 100%; height: 100%; display: block; }
+.cx-bg { fill: #f8f5ef; }
+.cx-parcel { fill: none; stroke: #b3a892; stroke-width: 0.8; vector-effect: non-scaling-stroke; }
+.cx-site { fill: #e8a25c; fill-opacity: 0.45; stroke: #c2701f; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.cx-bldg { stroke: #6f6a60; stroke-width: 0.8; vector-effect: non-scaling-stroke; }
+.cx-bldg:hover { fill: #2b6cb0 !important; }
+.cx-north path { fill: #2b2620; }
+.cx-north text, .cx-bar text { fill: #2b2620; }
+.cx-bar rect { fill: #2b2620; }
+.zone-result .cx-open { margin-top: 6px; display: flex; gap: 6px; align-items: center; }
+.cx-area { margin: 0 6px 0 0; align-self: center; }
+#context-map.drawing { cursor: crosshair; }
+#context-map .leaflet-container, #context-map { font: inherit; }
+#context-map { cursor: crosshair; }
+#context-map.panning { cursor: grabbing; }
+.cx-tip { font-weight: 600; color: #7a3e0a; }
+.cx-road { fill: #c9cfd4; stroke: #a7afb6; stroke-width: 0.8; vector-effect: non-scaling-stroke; }
+.cx-access { stroke: #d62d20; stroke-width: 5; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.cx-roadname { fill: #4b5560; font-weight: 600; paint-order: stroke; stroke: #f8f5ef; }
+.cx-roadline { fill: none; stroke: #c9cfd4; stroke-linecap: round; stroke-linejoin: round; }
+.cx-tiles { opacity: 0.85; }
+.cx-parcel { stroke-opacity: 0.6; }
+#context-2d { position: relative; }
+.cx-svg { cursor: grab; }
+.cx-svg.panning { cursor: grabbing; }
+.cx-north2 { position: absolute; top: 12px; right: 16px; text-align: center; font-weight: 700; color: #2b2620; line-height: 1; font-size: 18px; pointer-events: none; }
+.cx-bar2 { position: absolute; left: 16px; bottom: 14px; pointer-events: none; color: #2b2620; font-size: 12px; }
+.cx-bar2 span { display: block; margin-bottom: 2px; }
+.cx-bar2 i { display: block; height: 4px; background: #2b2620; }
