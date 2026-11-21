@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint } from "./layout.js?v=240";
-import { state, subscribe, summary } from "./state.js?v=240";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint } from "./layout.js?v=246";
+import { state, subscribe, summary } from "./state.js?v=246";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -84,6 +84,7 @@ function rebuild(sun) {
   const next = JSON.stringify({
     plate: state.plate,
     cores: state.cores,
+    buildings: state.buildings,
     openings: state.openings,
     ramps: state.ramps,
     route: state.route,
@@ -134,9 +135,11 @@ function rebuild(sun) {
   });
 
   host = building;
+  let towerH = 0;
   if (!single) {
     addGrade(plate);
     addLabel("지상", plate.width / 2, FLOOR_H + 1.2, -3);
+    if (state.floorView === "all") towerH = addTowers();
   }
   if (floors > drawn) addLabel(`외 ${floors - drawn}개 층`, plate.width + 8, -drawn * FLOOR_H / 2, plate.depth / 2);
 
@@ -145,7 +148,7 @@ function rebuild(sun) {
     const box = rampFootprint(ramp, plate);
     return Math.max(reach, Math.max(0, -box.x), Math.max(0, -box.y), Math.max(0, box.x + box.w - plate.width), Math.max(0, box.y + box.d - plate.depth));
   }, 0);
-  const span = Math.max(plate.width + rampReach, plate.depth + rampReach, stack * FLOOR_H);
+  const span = Math.max(plate.width + rampReach, plate.depth + rampReach, stack * FLOOR_H, towerH + FLOOR_H);
   sun.position.set(-plate.width * 0.2, span, plate.depth * 0.2);
   sun.target.position.set(plate.width / 2, single ? 1 : -drawn * FLOOR_H / 2, plate.depth / 2);
   sun.shadow.camera.left = -span;
@@ -158,10 +161,38 @@ function rebuild(sun) {
 
   if (!keepCamera) {
     const center = new THREE.Vector3(plate.width / 2, single ? 1.2 : -((drawn - 1) * FLOOR_H) / 2, plate.depth / 2);
-    camera.position.set(center.x + plate.width * 0.9, center.y + span * 0.42, center.z + plate.depth * 1.05);
+    const dist = towerH > 0 ? 1.25 : 1;
+    camera.position.set(center.x + plate.width * 0.9 * dist, center.y + span * 0.42 * dist, center.z + plate.depth * 1.05 * dist);
     controls.target.copy(center);
     controls.update();
   }
+}
+
+/** 지상선 위 반투명 타워 매스. B1·전체 층 보기일 때만. 반환: 최고 타워 높이(m). */
+function addTowers() {
+  let maxH = 0;
+  const mat = new THREE.MeshStandardMaterial({
+    color: "#9aa7b5",
+    transparent: true,
+    opacity: 0.35,
+    depthWrite: false,
+    roughness: 0.9,
+    metalness: 0.02,
+  });
+  (state.buildings || []).forEach((b) => {
+    const core = (state.cores || []).find((c) => c.buildingId === b.id && (c.kind || "building") !== "stair");
+    if (!core || !b.tower) return;
+    const tw = b.tower;
+    const h = (b.floors || 1) * (b.floorHeight || 2.9);
+    maxH = Math.max(maxH, h);
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(tw.w, h, tw.d), mat);
+    mesh.position.set(core.x + (tw.dx || 0) + tw.w / 2, FLOOR_H + h / 2, core.y + (tw.dy || 0) + tw.d / 2);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    host.add(mesh);
+    addLabel(`${b.name} ${b.floors}F`, core.x + (tw.dx || 0) + tw.w / 2, FLOOR_H + h + 1.4, core.y + (tw.dy || 0) + tw.d / 2, 5);
+  });
+  return maxH;
 }
 
 function standard(color, roughness, map) {

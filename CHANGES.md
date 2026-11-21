@@ -3,6 +3,16 @@
 AI(Claude)와 함께 확인·수정한 내용입니다. 각 항목은 문제 → 원인 → 수정 → 확인 순서로 적었습니다.
 점검은 `node scripts/report.mjs`(기존 회귀 점검)와 `node scripts/stall-types.mjs`(이번 추가 점검)로 했습니다.
 
+## v241–v246 — 단지형(여러 동 + 지하주차장 1개)
+
+- **v241** 코어끼리 겹침·6m 미만 간격 검사, `pushOutOf`가 이미 둔 코어를 피함, `scripts/multi-building.mjs` 추가.
+- **v242** `siteType` / `buildings` / `cores.kind`·`buildingId`, `defaultCores`·`stairCore`, `clampCore`가 kind·buildingId 보존.
+- **v243** 1단계 건물 형태 라디오·동 목록 UI. 법정 대수는 단지 전체 세대수.
+- **v244** 2단계 동 외곽·빗금, 계단 코어, `blockUnder`→`towerBlockRects`로 칸·차로 금지, 전이 구조 안내.
+- **v245** 3D 타워 매스·도면 동 라벨·동별 표.
+- **v246** 장애인 칸 동별 분배, multi-building sweep, README 단지형 절. 캐시 태그 `?v=246`.
+
+
 ## 1. 비주거 시설 주차대수 끝수 처리 오류 — `src/demand.js`
 
 - 문제: 산정값 0.96대가 1대로, 1.46대가 2대로 나왔습니다.

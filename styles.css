@@ -475,3 +475,12 @@ select:disabled { background: #efebe3; color: #333; opacity: 1; }
 .cx-bar2 { position: absolute; left: 16px; bottom: 14px; pointer-events: none; color: #2b2620; font-size: 12px; }
 .cx-bar2 span { display: block; margin-bottom: 2px; }
 .cx-bar2 i { display: block; height: 4px; background: #2b2620; }
+
+/* 단지형 동 목록 */
+.site-type { border: 1px solid #d9d2c6; border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+.site-type legend { padding: 0 6px; font-weight: 600; }
+.building-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
+.building-table th, .building-table td { border-bottom: 1px solid #e4ddd2; padding: 4px 4px; text-align: left; }
+.building-table input[type="text"],
+.building-table input[type="number"] { width: 100%; max-width: 88px; }
+.building-table input[data-key="name"] { max-width: 72px; }

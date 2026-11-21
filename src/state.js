@@ -1,15 +1,20 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=240";
+import { calculateDemand, emptyDemand } from "./demand.js?v=246";
 import {
   basementCount,
   clampCore,
   clampOpening,
   defaultCore,
+  defaultCores,
   defaultRampLength,
+  defaultTower,
   generateVariants,
   intervalsOverlap,
   layoutParking,
   referenceCase,
-} from "./layout.js?v=240";
+  stairCore,
+  towerBlockRects,
+  towerTransferNotes,
+} from "./layout.js?v=246";
 
 export const state = {
   step: 1,
@@ -17,6 +22,8 @@ export const state = {
   demand: emptyDemand(),
   floorView: "all",
   resultTab: "model",
+  siteType: "single",
+  buildings: [],
   parkWidth: 48,
   parkDepth: 42,
   columnSpacing: 8.1,
@@ -96,7 +103,7 @@ export function plateFromState() {
   const rules = currentStallRules();
   const spansX = parseSpans(state.spansX);
   const spansY = parseSpans(state.spansY);
-  return {
+  const plate = {
     width: round1(state.parkWidth),
     depth: round1(state.parkDepth),
     spacing: round1(state.columnSpacing),
@@ -117,6 +124,11 @@ export function plateFromState() {
     legalStalls: rules.legalStalls,
     stallRules: rules,
   };
+  if (state.siteType === "complex" && state.buildings.length) {
+    plate.buildings = state.buildings;
+    plate.blockRects = towerBlockRects(state.buildings, state.cores, plate);
+  }
+  return plate;
 }
 
 /** "4, 5, 6" → 숫자 배열. 비우면 null(기존 단일 간격). 3~15m 밖이면 error */
@@ -207,7 +219,7 @@ function adopt(result, keepObjects) {
   state.columns = result.columns;
   state.drives = result.drives;
   state.route = result.route;
-  state.issues = result.issues;
+  state.issues = result.issues || [];
   state.columnConflicts = result.columnConflicts || [];
   state.clearance = result.clearance || null;
   state.metrics = result.metrics;
@@ -225,6 +237,15 @@ function adopt(result, keepObjects) {
     state.coreIndex = Math.min(state.coreIndex, Math.max(0, state.cores.length - 1));
     syncCore();
   }
+  appendTransferNotes();
+}
+
+function appendTransferNotes() {
+  if (state.siteType !== "complex" || !state.buildings.length) return;
+  const notes = towerTransferNotes(state.buildings, state.cores, state.columns);
+  notes.forEach((note) => {
+    state.issues.push({ type: "notice", label: note.label });
+  });
 }
 
 export function refreshVariants() {
@@ -250,6 +271,14 @@ export function applyVariant(index) {
 
 export function rebuildLayout() {
   if (!state.plate) return;
+  // 코어를 끌면 동 외곽(blockRects)도 새 위치로 다시 계산.
+  if (state.siteType === "complex" && state.buildings.length) {
+    state.plate = {
+      ...state.plate,
+      buildings: state.buildings,
+      blockRects: towerBlockRects(state.buildings, state.cores, state.plate),
+    };
+  }
   const result = layoutParking({
     plate: state.plate,
     cores: state.cores,
@@ -290,9 +319,27 @@ function seedAccess() {
 
 export function generatePlate() {
   state.plate = plateFromState();
-  if (!state.cores.length) state.cores = [defaultCore(state.plate)];
-  state.cores = state.cores.map((core) => clampCore(core, state.plate));
+  if (!state.cores.length) {
+    if (state.siteType === "complex" && state.buildings.length) {
+      linkBuildingsToCores(defaultCores(state.plate, state.buildings.length));
+    } else {
+      state.cores = [defaultCore(state.plate)];
+    }
+  } else if (state.siteType === "complex" && state.buildings.length) {
+    // 계단 코어는 유지, 동 코어가 없으면 동 수만큼 채움.
+    const stairs = state.cores.filter((c) => c.kind === "stair").map((c) => clampCore(c, state.plate));
+    const buildingCores = state.cores.filter((c) => (c.kind || "building") !== "stair");
+    if (!buildingCores.length) {
+      linkBuildingsToCores(defaultCores(state.plate, state.buildings.length));
+      state.cores = state.cores.concat(stairs);
+    }
+  }
+  state.cores = state.cores.map((core) => (core.grid === false ? clampCore(core, state.plate) : clampCore(core, state.plate)));
   syncCore();
+  if (state.siteType === "complex") {
+    state.plate.blockRects = towerBlockRects(state.buildings, state.cores, state.plate);
+    state.plate.buildings = state.buildings;
+  }
   seedAccess();
   state.referenceNotes = [];
   refreshVariants();
@@ -305,6 +352,8 @@ export function generatePlate() {
 
 export function loadReference() {
   const sample = referenceCase;
+  state.siteType = "single";
+  state.buildings = [];
   state.parkWidth = sample.width;
   state.parkDepth = sample.depth;
   state.columnSpacing = sample.spacing;
@@ -377,6 +426,8 @@ export function summary() {
   const floors = basementCount(required, placed);
   const totalStalls = placed * floors;
   const metrics = state.metrics;
+  const buildingFloors = state.buildings.reduce((sum, b) => sum + (b.floors || 0), 0);
+  const stairCores = state.cores.filter((c) => c.kind === "stair").length;
   return {
     width: plate ? plate.width : 0,
     depth: plate ? plate.depth : 0,
@@ -395,6 +446,13 @@ export function summary() {
     similarity: metrics ? metrics.similarity : 0,
     aisleRatio: metrics ? metrics.aisleRatio : 0,
     demand,
+    siteType: state.siteType,
+    buildingCount: state.buildings.length,
+    buildingFloors,
+    maxBuildingFloors: state.buildings.reduce((m, b) => Math.max(m, b.floors || 0), 0),
+    stairCores,
+    stallTypes: metrics ? metrics.stallTypes : null,
+    stallTargets: metrics ? metrics.stallTargets : null,
   };
 }
 
@@ -419,14 +477,181 @@ export function selectCore(index) {
 }
 
 export function addCore() {
+  if (state.siteType === "complex") {
+    addBuilding();
+    return;
+  }
   if (!state.plate) return;
-  const core = defaultCore(state.plate);
-  core.x = round1(core.x + state.cores.length * 2);
-  state.cores.push(clampCore(core, state.plate));
+  // 겹치지 않게 빈 자리에 둔다(기존 +2m 스택 버그 수정).
+  const placed = defaultCores(state.plate, state.cores.length + 1);
+  const next = placed[placed.length - 1];
+  next.kind = "building";
+  state.cores.push(clampCore(next, state.plate));
   state.coreIndex = state.cores.length - 1;
   syncCore();
   rebuildLayout();
   emit();
+}
+
+function makeBuilding(index, core) {
+  const name = `${101 + index}동`;
+  const tower = defaultTower(core.w, core.d, 30, 14);
+  return {
+    id: state.nextId++,
+    name,
+    floors: 15,
+    floorHeight: 2.9,
+    tower,
+    blockUnder: true,
+  };
+}
+
+function linkBuildingsToCores(cores) {
+  const list = cores.map((c) => ({ ...c, kind: c.kind || "building" }));
+  while (state.buildings.length < list.length) {
+    state.buildings.push(makeBuilding(state.buildings.length, list[state.buildings.length]));
+  }
+  list.forEach((core, i) => {
+    const b = state.buildings[i];
+    if (!b) return;
+    core.buildingId = b.id;
+    core.kind = "building";
+    b.tower = b.tower || defaultTower(core.w, core.d);
+  });
+  state.cores = list;
+  state.coreIndex = 0;
+  syncCore();
+}
+
+export function setSiteType(type) {
+  if (type !== "single" && type !== "complex") return;
+  if (state.siteType === type) return;
+  state.siteType = type;
+  if (type === "complex") {
+    if (!state.buildings.length) {
+      // 평면이 아직 없으면 임시 크기로 코어를 잡고, generatePlate 때 다시 맞춤.
+      const probe = state.plate || plateFromState();
+      const cores = defaultCores(probe, 3);
+      state.buildings = [];
+      cores.forEach((core, i) => {
+        const b = makeBuilding(i, core);
+        core.buildingId = b.id;
+        core.kind = "building";
+        state.buildings.push(b);
+      });
+      state.cores = cores.map((c) => (state.plate ? clampCore(c, state.plate) : c));
+      syncCore();
+    }
+    state.demand.active = { ...(state.demand.active || {}), apartment: true };
+    state.noGroundAccess = true;
+  } else {
+    state.buildings = [];
+    if (state.plate) {
+      state.cores = [clampCore({ ...defaultCore(state.plate), kind: "building" }, state.plate)];
+    } else {
+      state.cores = [];
+    }
+    state.coreIndex = 0;
+    syncCore();
+    if (state.plate) {
+      state.plate.blockRects = [];
+      state.plate.buildings = [];
+    }
+  }
+  if (state.plate) rebuildLayout();
+  emit();
+}
+
+export function addBuilding() {
+  if (state.siteType !== "complex") return;
+  const probe = state.plate || plateFromState();
+  const buildingCores = state.cores.filter((c) => (c.kind || "building") !== "stair");
+  const stairs = state.cores.filter((c) => c.kind === "stair");
+  const next = defaultCores(probe, buildingCores.length + 1);
+  const core = next[next.length - 1];
+  const building = makeBuilding(state.buildings.length, core);
+  core.buildingId = building.id;
+  core.kind = "building";
+  state.buildings.push(building);
+  state.cores = buildingCores.concat(
+    [state.plate ? clampCore(core, state.plate) : core],
+    stairs,
+  );
+  state.coreIndex = buildingCores.length;
+  syncCore();
+  if (state.plate) rebuildLayout();
+  emit();
+}
+
+export function removeBuilding(id) {
+  if (state.siteType !== "complex") return;
+  if (state.buildings.length <= 1) return;
+  state.buildings = state.buildings.filter((b) => b.id !== id);
+  state.cores = state.cores.filter((c) => c.buildingId !== id);
+  state.coreIndex = Math.min(state.coreIndex, Math.max(0, state.cores.length - 1));
+  syncCore();
+  if (state.plate) rebuildLayout();
+  emit();
+}
+
+export function updateBuilding(id, partial) {
+  const building = state.buildings.find((b) => b.id === id);
+  if (!building) return;
+  if (partial.name != null) building.name = String(partial.name);
+  if (partial.floors != null) building.floors = Math.max(1, Number(partial.floors) || 1);
+  if (partial.floorHeight != null) building.floorHeight = Math.max(2.5, Number(partial.floorHeight) || 2.9);
+  if (partial.blockUnder != null) building.blockUnder = Boolean(partial.blockUnder);
+  if (partial.tower) {
+    building.tower = { ...building.tower, ...partial.tower };
+  }
+  if (state.plate) rebuildLayout();
+  emit();
+}
+
+export function addStairCore(point) {
+  const probe = state.plate || plateFromState();
+  let near = point;
+  if (!near) {
+    // 빈 자리: 기존 코어와 겹치지 않는 후보
+    const cx = probe.width / 2;
+    const cy = probe.depth * 0.25;
+    near = { x: cx, y: cy };
+  }
+  const core = stairCore(probe, near);
+  // 다른 코어와 겹치면 x를 밀어 본다.
+  const others = state.cores.slice();
+  for (let k = 0; k < 8; k += 1) {
+    const hit = others.some((o) => {
+      const ox = Math.min(core.x + core.w, o.x + o.w) - Math.max(core.x, o.x);
+      const oy = Math.min(core.y + core.d, o.y + o.d) - Math.max(core.y, o.y);
+      return ox > 0.01 && oy > 0.01;
+    });
+    if (!hit) break;
+    core.x = round1(core.x + 8);
+    if (state.plate) Object.assign(core, clampCore(core, state.plate));
+  }
+  state.cores.push(state.plate ? clampCore(core, state.plate) : core);
+  state.coreIndex = state.cores.length - 1;
+  syncCore();
+  state.selection = { type: "core", index: state.coreIndex };
+  if (state.plate) rebuildLayout();
+  emit();
+}
+
+export function buildingOfCore(core) {
+  if (!core || core.buildingId == null) return null;
+  return state.buildings.find((b) => b.id === core.buildingId) || null;
+}
+
+export function coreLabel(core, index) {
+  if (!core) return `코어 ${index + 1}`;
+  if (core.kind === "stair") {
+    const stairIndex = state.cores.filter((c, i) => i <= index && c.kind === "stair").length;
+    return `계단 ${stairIndex}`;
+  }
+  const building = buildingOfCore(core);
+  if (building) return `${building.name} 코어`;
+  return `코어 ${index + 1}`;
 }
 
 export function updateCoreArea(area) {
@@ -568,10 +793,23 @@ export function removeSelection() {
     state.ramps = state.ramps.filter((item) => item.id !== id);
     state.openings = state.openings.filter((item) => item.linkedRamp !== id);
   }
-  if (state.selection.type === "core" && state.cores.length > 1) {
-    state.cores.splice(state.coreIndex, 1);
-    state.coreIndex = 0;
-    syncCore();
+  if (state.selection.type === "core") {
+    const core = state.cores[state.coreIndex];
+    if (core && core.kind === "stair") {
+      state.cores.splice(state.coreIndex, 1);
+      state.coreIndex = 0;
+      syncCore();
+    } else {
+      const buildingCores = state.cores.filter((c) => (c.kind || "building") !== "stair");
+      if (buildingCores.length > 1) {
+        if (core && core.buildingId != null) {
+          state.buildings = state.buildings.filter((b) => b.id !== core.buildingId);
+        }
+        state.cores.splice(state.coreIndex, 1);
+        state.coreIndex = 0;
+        syncCore();
+      }
+    }
   }
   state.selection = null;
   rebuildLayout();

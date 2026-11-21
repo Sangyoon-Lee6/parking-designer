@@ -1,11 +1,11 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=240";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=240";
-import { drawThumb, mountPlan } from "./plan.js?v=240";
-import { stallRuleTargets } from "./stallTypes.js?v=240";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=240";
-import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=240";
-import { bindContextDialog, closeContext, openContext } from "./context.js?v=240";
-import { addCore, applyVariant, autoPlaceCore, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setStep, setTool, state, subscribe, summary, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=240";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=246";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=246";
+import { drawThumb, mountPlan } from "./plan.js?v=246";
+import { stallRuleTargets } from "./stallTypes.js?v=246";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=246";
+import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=246";
+import { bindContextDialog, closeContext, openContext } from "./context.js?v=246";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=246";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -221,6 +221,46 @@ $("ramp-auto").addEventListener("click", () => {
 $("place-split").addEventListener("click", placeSplitExample);
 $("place-overlap").addEventListener("click", placeOverlapExample);
 $("add-core").addEventListener("click", addCore);
+$("add-stair").addEventListener("click", () => addStairCore());
+$("add-building").addEventListener("click", addBuilding);
+document.querySelectorAll('input[name="site-type"]').forEach((radio) => {
+  radio.addEventListener("change", () => {
+    if (!radio.checked) return;
+    setSiteType(radio.value);
+    const apt = document.querySelector('[data-fields="apartment"]');
+    if (apt) apt.innerHTML = "";
+    syncUseFields();
+  });
+});
+$("building-rows").addEventListener("change", (event) => {
+  const row = event.target.closest("tr[data-id]");
+  if (!row) return;
+  const id = Number(row.dataset.id);
+  const key = event.target.dataset.key;
+  if (!key) return;
+  if (key === "blockUnder") updateBuilding(id, { blockUnder: event.target.checked });
+  else if (key === "name") updateBuilding(id, { name: event.target.value });
+  else if (key === "floors") updateBuilding(id, { floors: Number(event.target.value) });
+  else if (key === "towerW") updateBuilding(id, { tower: { w: Number(event.target.value) } });
+  else if (key === "towerD") updateBuilding(id, { tower: { d: Number(event.target.value) } });
+});
+$("building-rows").addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-remove]");
+  if (!btn) return;
+  removeBuilding(Number(btn.dataset.remove));
+});
+["building-floors", "building-tower-w", "building-tower-d", "building-block-under"].forEach((id) => {
+  const el = $(id);
+  if (!el) return;
+  el.addEventListener("change", () => {
+    const building = buildingOfCore(state.core);
+    if (!building) return;
+    if (id === "building-floors") updateBuilding(building.id, { floors: Number(el.value) });
+    else if (id === "building-tower-w") updateBuilding(building.id, { tower: { w: Number(el.value) } });
+    else if (id === "building-tower-d") updateBuilding(building.id, { tower: { d: Number(el.value) } });
+    else if (id === "building-block-under") updateBuilding(building.id, { blockUnder: el.checked });
+  });
+});
 $("core-pick").addEventListener("change", () => selectCore(Number($("core-pick").value)));
 $("play-build").addEventListener("click", playBuild);
 $("show-conflicts").addEventListener("click", () => {
@@ -320,7 +360,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=240")
+    sceneMount = import("./scene.js?v=246")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -439,6 +479,16 @@ function render() {
     ["차로 면적 비율", state.metrics ? `${Math.round(info.aisleRatio * 100)}%` : "—"],
     ["동선 연결", state.plate ? (info.connected ? "연결" : "끊김") : "—"],
   ];
+  if (state.siteType === "complex" && info.buildingCount) {
+    rows.splice(1, 0, ["단지 구성", `동 ${info.buildingCount}개 · 최고 ${info.maxBuildingFloors}층 · 계단 코어 ${info.stairCores}개`]);
+  }
+  renderBuildingList();
+  document.querySelectorAll('input[name="site-type"]').forEach((radio) => {
+    radio.checked = radio.value === state.siteType;
+  });
+  $("complex-hint").hidden = state.siteType !== "complex";
+  $("building-list-wrap").hidden = state.siteType !== "complex";
+  $("add-core").textContent = state.siteType === "complex" ? "동 추가" : "코어 추가";
   if (state.metrics && state.metrics.rampKind) {
     const ramp = state.ramps[0];
     const curved = state.metrics.rampKind === "curved";
@@ -545,9 +595,51 @@ function render() {
 
 function renderCorePick() {
   const select = $("core-pick");
-  const markup = state.cores.map((core, index) => `<option value="${index}">코어 ${index + 1} · ${core.w.toFixed(1)}×${core.d.toFixed(1)}m</option>`).join("");
+  const markup = state.cores.map((core, index) => {
+    const name = coreLabel(core, index);
+    return `<option value="${index}">${name} · ${core.w.toFixed(1)}×${core.d.toFixed(1)}m</option>`;
+  }).join("");
   if (select.innerHTML !== markup) select.innerHTML = markup;
   if (state.cores.length) select.value = String(state.coreIndex);
+  const building = buildingOfCore(state.core);
+  const fields = $("building-core-fields");
+  if (fields) {
+    fields.hidden = !building;
+    if (building) {
+      setIfIdle($("building-floors"), building.floors);
+      setIfIdle($("building-tower-w"), building.tower.w);
+      setIfIdle($("building-tower-d"), building.tower.d);
+      if (document.activeElement !== $("building-block-under")) $("building-block-under").checked = Boolean(building.blockUnder);
+    }
+  }
+}
+
+function renderBuildingList() {
+  const body = $("building-rows");
+  if (!body) return;
+  const focus = document.activeElement;
+  const focusKey = focus && focus.dataset && focus.closest("tr[data-id]")
+    ? `${focus.closest("tr[data-id]").dataset.id}:${focus.dataset.key}`
+    : null;
+  body.innerHTML = state.buildings.map((b) => `
+    <tr data-id="${b.id}">
+      <td><input data-key="name" type="text" value="${escapeAttr(b.name)}" /></td>
+      <td><input data-key="floors" type="number" min="1" step="1" value="${b.floors}" /></td>
+      <td><input data-key="towerW" type="number" min="5" step="0.1" value="${b.tower.w}" /></td>
+      <td><input data-key="towerD" type="number" min="5" step="0.1" value="${b.tower.d}" /></td>
+      <td><input data-key="blockUnder" type="checkbox" ${b.blockUnder ? "checked" : ""} /></td>
+      <td><button type="button" class="ghost tiny" data-remove="${b.id}" ${state.buildings.length <= 1 ? "disabled" : ""}>삭제</button></td>
+    </tr>
+  `).join("");
+  if (focusKey) {
+    const [id, key] = focusKey.split(":");
+    const input = body.querySelector(`tr[data-id="${id}"] [data-key="${key}"]`);
+    if (input) input.focus();
+  }
+}
+
+function escapeAttr(value) {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
 function renderCompare() {
@@ -869,9 +961,10 @@ function syncUseFields() {
     const box = document.querySelector(`[data-fields="${use.id}"]`);
     if (!box || !state.demand.active[use.id] || box.childElementCount) return;
     if (use.kind === "housing") {
+      const countLabel = state.siteType === "complex" && use.id === "apartment" ? "단지 전체 세대수" : "세대수";
       box.innerHTML = state.demand.bands[use.id].map((band, index) => `
         <div class="band-row">
-          <label>세대수 <input data-band="${use.id}" data-index="${index}" data-key="count" type="number" min="0" step="1" value="${band.count}" /></label>
+          <label>${countLabel} <input data-band="${use.id}" data-index="${index}" data-key="count" type="number" min="0" step="1" value="${band.count}" /></label>
           <label>전용면적 <input data-band="${use.id}" data-index="${index}" data-key="area" type="number" min="0" step="1" value="${band.area}" /></label>
           ${index > 0 ? `<button type="button" class="ghost tiny band-del" data-band-del="${use.id}" data-index="${index}" aria-label="구간 ${index + 1} 삭제" title="이 구간 삭제">×</button>` : `<span class="band-del-space"></span>`}
         </div>

@@ -11,6 +11,7 @@ function ceilRate(total, rate) {
 
 /** 조건(stallRules) → 목표 칸 수 */
 export function stallRuleTargets(rules = {}) {
+  rules = rules || {};
   const legal = Math.max(0, Number(rules.legalStalls) || 0);
   const disabledOn = Boolean(rules.disabled) && legal >= 10;
   const disabledRate = disabledOn ? Math.min(0.04, Math.max(0.02, Number(rules.disabledRate) || 0.02)) : 0;
@@ -65,41 +66,111 @@ function dist2(ax, ay, bx, by) {
   return dx * dx + dy * dy;
 }
 
-function coreCenters(cores = []) {
-  return cores.map((c) => ({ x: c.x + c.w / 2, y: c.y + c.d / 2 }));
+/** 동 코어(kind !== "stair")만. 없으면 전체 코어. */
+function buildingCoreEntries(cores = [], blockRects = []) {
+  const building = cores
+    .map((c, index) => ({ core: c, index }))
+    .filter((e) => (e.core.kind || "building") !== "stair");
+  const use = building.length ? building : cores.map((c, index) => ({ core: c, index }));
+  return use.map((e) => {
+    const block = e.core.buildingId != null
+      ? blockRects.find((b) => b.buildingId === e.core.buildingId)
+      : null;
+    const anchor = block || e.core;
+    return {
+      index: e.index,
+      x: anchor.x + anchor.w / 2,
+      y: anchor.y + anchor.d / 2,
+    };
+  });
 }
 
 /**
  * 일반형으로 채워진 칸에 유형을 붙인다.
- * 원본은 베이를 3.3m로 다시 나누지만, 여기선 코어에 가까운 칸부터 폭만 넓혀 표시한다.
+ * 동 코어가 2개 이상이고 장애인 목표가 동 수 이상이면 먼저 동마다 1대씩 배분.
  */
 export function assignStallTypes(stalls = [], typeRules = stallRuleTargets(), opts = {}) {
   const targets = typeRules || stallRuleTargets();
   const list = stalls.map((s) => ({ ...s, type: s.type || (s.parallel ? "parallel" : "general") }));
-  const centers = coreCenters(opts.cores || []);
+  const anchors = buildingCoreEntries(opts.cores || [], (opts.plate && opts.plate.blockRects) || opts.blockRects || []);
   const scored = list
     .map((stall, index) => {
       const sx = stall.x + stall.w / 2;
       const sy = stall.y + stall.d / 2;
-      const near = centers.length
-        ? Math.min(...centers.map((c) => dist2(sx, sy, c.x, c.y)))
-        : index;
-      return { index, near, stall };
+      let near = index;
+      let nearCore = 0;
+      if (anchors.length) {
+        let best = Infinity;
+        anchors.forEach((a) => {
+          const d = dist2(sx, sy, a.x, a.y);
+          if (d < best) {
+            best = d;
+            near = d;
+            nearCore = a.index;
+          }
+        });
+      }
+      return { index, near, nearCore, stall };
     })
     .sort((a, b) => a.near - b.near);
 
   let disabledLeft = targets.disabled || 0;
   let ecoLeft = targets.eco || 0;
   let extendedLeft = targets.extended || 0;
+  const used = new Set();
+
+  const markDisabled = (item, { skipReach = false } = {}) => {
+    const stall = list[item.index];
+    if (stall.parallel || stall.type === "parallel") return false;
+    if (!skipReach && opts.reach && !opts.reach(stall)) return false;
+    if (stall.w + 0.01 < STALL_W) return false;
+    stall.type = "disabled";
+    // 폭을 3.3m로 키우면 옆 칸·기둥과 겹칠 수 있어, 여유가 있을 때만 넓힌다.
+    if (stall.w + 0.01 >= DISABLED_W) stall.w = Math.max(stall.w, DISABLED_W);
+    stall.nearCore = item.nearCore;
+    used.add(item.index);
+    return true;
+  };
+
+  // 동별 최소 1대(목표 ≥ 동 코어 수일 때): 각 동 코어에 가장 가까운 후보부터.
+  // 동 아래 막기로 차로가 잘린 뒤 reach가 엄격하면 동별 1대가 빠질 수 있어, 1차 배분은 reach를 건너뛴다.
+  const blocks = (opts.plate && opts.plate.blockRects) || opts.blockRects || [];
+  const overlapsBlock = (stall) => blocks.some((b) => {
+    const ox = Math.min(stall.x + stall.w, b.x + b.w) - Math.max(stall.x, b.x);
+    const oy = Math.min(stall.y + stall.d, b.y + b.d) - Math.max(stall.y, b.y);
+    return ox > 0.05 && oy > 0.05;
+  });
+  if (anchors.length >= 2 && disabledLeft >= anchors.length) {
+    for (const anchor of anchors) {
+      if (disabledLeft <= 0) break;
+      const ranked = scored
+        .filter((item) => !used.has(item.index) && !overlapsBlock(list[item.index]))
+        .map((item) => {
+          const stall = list[item.index];
+          const sx = stall.x + stall.w / 2;
+          const sy = stall.y + stall.d / 2;
+          return { item, dist: dist2(sx, sy, anchor.x, anchor.y) };
+        })
+        .sort((a, b) => a.dist - b.dist);
+      for (const { item } of ranked) {
+        if (markDisabled({ ...item, nearCore: anchor.index }, { skipReach: true })) {
+          disabledLeft -= 1;
+          break;
+        }
+      }
+    }
+  }
 
   for (const item of scored) {
+    if (used.has(item.index)) continue;
     const stall = list[item.index];
     if (stall.parallel || stall.type === "parallel") continue;
     if (opts.reach && !opts.reach(stall)) continue;
 
     if (disabledLeft > 0 && stall.w + 0.01 >= STALL_W) {
       stall.type = "disabled";
-      stall.w = Math.max(stall.w, DISABLED_W);
+      if (stall.w + 0.01 >= DISABLED_W) stall.w = Math.max(stall.w, DISABLED_W);
+      stall.nearCore = item.nearCore;
       disabledLeft -= 1;
       continue;
     }
@@ -110,7 +181,8 @@ export function assignStallTypes(stalls = [], typeRules = stallRuleTargets(), op
     }
     if (extendedLeft > 0) {
       stall.type = "extended";
-      stall.w = Math.max(stall.w, 2.6);
+      // 확장형도 겹침을 만들지 않도록 이미 2.6 이상일 때만 표시용으로 유지
+      if (stall.w + 0.01 >= 2.6) stall.w = Math.max(stall.w, 2.6);
       extendedLeft -= 1;
     }
   }

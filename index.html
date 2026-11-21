@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=240" />
+    <link rel="stylesheet" href="styles.css?v=246" />
     <script type="importmap">
       {
         "imports": {
@@ -90,6 +90,21 @@
         </dialog>
         <button type="button" id="suggest-size" class="ghost tiny">법정 대수로 크기 추천</button>
         <p class="hint" id="suggest-note"></p>
+        <fieldset class="site-type">
+          <legend>건물 형태</legend>
+          <label class="check"><input type="radio" name="site-type" value="single" checked /> 단일 건물</label>
+          <label class="check"><input type="radio" name="site-type" value="complex" /> 단지형 (여러 동 + 지하주차장 1개)</label>
+          <p id="complex-hint" class="hint" hidden>법정 주차대수는 <strong>단지 전체 세대수</strong>로 계산합니다. 동은 위치·층수·외곽만 입력합니다. 지상공원형(지하 차로 2.7m)을 기본으로 켭니다.</p>
+          <div id="building-list-wrap" hidden>
+            <table id="building-table" class="building-table">
+              <thead>
+                <tr><th>동 이름</th><th>지상 층수</th><th>가로(m)</th><th>세로(m)</th><th>동 아래 주차 금지</th><th></th></tr>
+              </thead>
+              <tbody id="building-rows"></tbody>
+            </table>
+            <button type="button" id="add-building" class="ghost tiny">동 추가</button>
+          </div>
+        </fieldset>
         <div class="split">
           <label>
             주차장 가로 (m) <span class="info" tabindex="0" title="주차장(지하 외벽 안쪽) 크기. 모르면 위 '법정 대수로 크기 추천'으로 채운 뒤 고쳐 쓰세요.">ⓘ</span>
@@ -275,6 +290,7 @@
               <select id="core-pick"></select>
             </label>
             <button id="add-core" type="button" class="ghost">코어 추가</button>
+            <button id="add-stair" type="button" class="ghost">계단 코어 추가</button>
           </div>
           <div class="split">
             <label>
@@ -320,6 +336,14 @@
                 Y (m)
                 <input id="core-y" type="number" step="0.1" />
               </label>
+            </div>
+            <div id="building-core-fields" hidden>
+              <div class="split">
+                <label>동 층수 <input id="building-floors" type="number" min="1" step="1" value="15" /></label>
+                <label>동 가로 (m) <input id="building-tower-w" type="number" min="5" step="0.1" value="30" /></label>
+                <label>동 세로 (m) <input id="building-tower-d" type="number" min="5" step="0.1" value="14" /></label>
+              </div>
+              <label class="check"><input id="building-block-under" type="checkbox" checked /> 동 아래 주차 금지</label>
             </div>
             <p class="hint">면적·가로·세로를 직접 넣으면 기둥 격자 맞춤이 꺼집니다. 칸 수를 다시 고르면 켜집니다. X·Y는 남서쪽 모서리 기준입니다.</p>
             <div class="dialog-actions"><button type="button" id="close-core-dialog">확인</button></div>
@@ -476,7 +500,7 @@
       </div>
     </main>
 
-    <script type="module" src="src/main.js?v=240"></script>
+    <script type="module" src="src/main.js?v=246"></script>
       <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>

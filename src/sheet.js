@@ -1,4 +1,4 @@
-import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint } from "./layout.js?v=240";
+import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint } from "./layout.js?v=246";
 
 const EDGE = { n: "북", e: "동", s: "남", w: "서" };
 
@@ -68,11 +68,34 @@ export function renderSheet(paint, state, info, floorIndex) {
     paint.fill(xOf(column.x), yOf(column.y + sizeD), sizeW * scale, sizeD * scale, "#222");
     if (index < 80) paint.text(xOf(column.x) - 4, yOf(column.y) - 4, `C${index + 1}`, 9, "#111");
   });
+  let stairNo = 0;
   (state.cores || (state.core ? [state.core] : [])).forEach((core, index) => {
+    const building = core.buildingId != null
+      ? (state.buildings || []).find((b) => b.id === core.buildingId)
+      : null;
+    if (building && building.tower) {
+      const tw = building.tower;
+      const tx = core.x + (tw.dx || 0);
+      const ty = core.y + (tw.dy || 0);
+      const clip = clipRect({ x: tx, y: ty, w: tw.w, d: tw.d }, plate);
+      if (clip) {
+        if (building.blockUnder) {
+          hatchOnPaint(paint, xOf, yOf, scale, clip);
+        }
+        paint.strokeRect(xOf(clip.x), yOf(clip.y + clip.d), clip.w * scale, clip.d * scale, "#555", 1, true);
+      }
+    }
     paint.strokeRect(xOf(core.x), yOf(core.y + core.d), core.w * scale, core.d * scale, "#111", 2.4);
     paint.line(xOf(core.x + core.w * 0.34), yOf(core.y + core.d), xOf(core.x + core.w * 0.34), yOf(core.y), "#111", 1);
     paint.line(xOf(core.x + core.w * 0.67), yOf(core.y + core.d), xOf(core.x + core.w * 0.67), yOf(core.y), "#111", 1);
-    paint.text(xOf(core.x + core.w / 2) - 18, yOf(core.y + core.d / 2), `코어 ${index + 1}`, 12, "#111");
+    let name = `코어 ${index + 1}`;
+    if (core.kind === "stair") {
+      stairNo += 1;
+      name = `계단 ${stairNo}`;
+    } else if (building) {
+      name = `${building.name} 코어`;
+    }
+    paint.text(xOf(core.x + core.w / 2) - 22, yOf(core.y + core.d / 2), name, 12, "#111");
   });
   for (const ramp of state.ramps) {
     const box = rampFootprint(ramp, plate);
@@ -132,8 +155,23 @@ export function renderSheet(paint, state, info, floorIndex) {
   paint.text(margin.l + 90, height - 52, `축척 1:${Math.round(metersPerPx * 1000)}`, 12, "#111");
 
   const boxX = width - 330;
-  const boxY = height - 250;
-  paint.strokeRect(boxX, boxY, 290, 180, "#111", 1.2);
+  const buildingRows = (state.buildings || []).map((b) => {
+    const core = (state.cores || []).find((c) => c.buildingId === b.id && (c.kind || "building") !== "stair");
+    if (!core) return null;
+    const cx = core.x + core.w / 2;
+    const cy = core.y + core.d / 2;
+    const near30 = state.stalls.filter((s) => Math.hypot(s.x + s.w / 2 - cx, s.y + s.d / 2 - cy) <= 30).length;
+    const disabled = state.stalls.filter((s) => s.type === "disabled");
+    let dist = "—";
+    if (disabled.length) {
+      const best = Math.min(...disabled.map((s) => Math.hypot(s.x + s.w / 2 - cx, s.y + s.d / 2 - cy)));
+      dist = `${best.toFixed(1)}m`;
+    }
+    return [b.name, `${b.floors}F`, `${core.w.toFixed(1)}×${core.d.toFixed(1)}`, `${near30}`, dist];
+  }).filter(Boolean);
+  const boxH = 180 + (buildingRows.length ? 28 + buildingRows.length * 18 : 0);
+  const boxY = height - (boxH + 70);
+  paint.strokeRect(boxX, boxY, 290, boxH, "#111", 1.2);
   const lines = [
     ["도면명", `지하 ${floorIndex + 1}층 주차장 평면도`],
     ["프로젝트", state.demand?.projectName || "주차장"],
@@ -149,7 +187,72 @@ export function renderSheet(paint, state, info, floorIndex) {
     paint.text(boxX + 10, y, line[0], 12, "#555");
     paint.text(boxX + 78, y, line[1], 13, "#111");
   });
+  if (buildingRows.length) {
+    let y = boxY + 24 + lines.length * 22 + 8;
+    paint.text(boxX + 10, y, "동별 (직선거리 기준)", 12, "#555");
+    y += 16;
+    paint.text(boxX + 10, y, "동", 11, "#777");
+    paint.text(boxX + 55, y, "층", 11, "#777");
+    paint.text(boxX + 90, y, "코어", 11, "#777");
+    paint.text(boxX + 160, y, "30m칸", 11, "#777");
+    paint.text(boxX + 215, y, "장애인", 11, "#777");
+    buildingRows.forEach((row) => {
+      y += 18;
+      paint.text(boxX + 10, y, row[0], 11, "#111");
+      paint.text(boxX + 55, y, row[1], 11, "#111");
+      paint.text(boxX + 90, y, row[2], 11, "#111");
+      paint.text(boxX + 160, y, row[3], 11, "#111");
+      paint.text(boxX + 215, y, row[4], 11, "#111");
+    });
+    const stairs = (state.cores || []).filter((c) => c.kind === "stair").length;
+    if (stairs) paint.text(boxX + 10, y + 18, `계단 코어 ${stairs}개`, 11, "#555");
+  }
   if (!state.connected) paint.text(margin.l, height - 28, "동선이 끊겨 있어 이 도면은 검토용으로만 표시합니다.", 13, "#9a3412");
+}
+
+function clipRect(rect, plate) {
+  const x0 = Math.max(0, rect.x);
+  const y0 = Math.max(0, rect.y);
+  const x1 = Math.min(plate.width, rect.x + rect.w);
+  const y1 = Math.min(plate.depth, rect.y + rect.d);
+  if (x1 - x0 < 0.05 || y1 - y0 < 0.05) return null;
+  return { x: x0, y: y0, w: x1 - x0, d: y1 - y0 };
+}
+
+function hatchOnPaint(paint, xOf, yOf, _scale, rect) {
+  const step = 1.4;
+  for (let t = -rect.d; t < rect.w + rect.d; t += step) {
+    const clipped = clipLineToRect(rect.x + t, rect.y, rect.x + t + rect.d, rect.y + rect.d, rect);
+    if (!clipped) continue;
+    paint.line(xOf(clipped.x1), yOf(clipped.y1), xOf(clipped.x2), yOf(clipped.y2), "#999", 0.7);
+  }
+}
+
+function clipLineToRect(x1, y1, x2, y2, r) {
+  // Liang-Barsky 간단 클립
+  let t0 = 0;
+  let t1 = 1;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const clip = (p, q) => {
+    if (p === 0) return q >= 0;
+    const t = q / p;
+    if (p < 0) {
+      if (t > t1) return false;
+      if (t > t0) t0 = t;
+    } else {
+      if (t < t0) return false;
+      if (t < t1) t1 = t;
+    }
+    return true;
+  };
+  if (!clip(-dx, x1 - r.x) || !clip(dx, r.x + r.w - x1) || !clip(-dy, y1 - r.y) || !clip(dy, r.y + r.d - y1)) return null;
+  return {
+    x1: x1 + t0 * dx,
+    y1: y1 + t0 * dy,
+    x2: x1 + t1 * dx,
+    y2: y1 + t1 * dy,
+  };
 }
 
 function dimension(paint, x1, y1, x2, y2, label) {

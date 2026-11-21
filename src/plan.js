@@ -1,5 +1,5 @@
-import { edgePoint, pickEdge, rampFootprint } from "./layout.js?v=240";
-import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=240";
+import { edgePoint, pickEdge, rampFootprint } from "./layout.js?v=246";
+import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=246";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -122,14 +122,38 @@ export function mountPlan(canvas) {
       label(ctx, "램프", footprint.x + footprint.w / 2, footprint.y + footprint.d / 2, "#7a5418");
     });
 
+    let stairNo = 0;
     state.cores.forEach((core, index) => {
       const selected = state.selection?.type === "core" && state.coreIndex === index;
-      ctx.fillStyle = "rgba(44, 74, 110, 0.16)";
-      ctx.strokeStyle = selected ? "#1e1a16" : "#2c4a6e";
+      const building = core.buildingId != null
+        ? (state.buildings || []).find((b) => b.id === core.buildingId)
+        : null;
+      if (building && building.tower) {
+        const tw = building.tower;
+        const tx = core.x + (tw.dx || 0);
+        const ty = core.y + (tw.dy || 0);
+        ctx.save();
+        ctx.setLineDash([0.9, 0.55]);
+        ctx.strokeStyle = "#6b5a45";
+        ctx.lineWidth = 1.2 / camera.scale;
+        if (building.blockUnder) {
+          hatchRect(ctx, tx, ty, tw.w, tw.d, "rgba(107, 90, 69, 0.12)");
+        }
+        ctx.strokeRect(tx, ty, tw.w, tw.d);
+        ctx.restore();
+        label(ctx, building.name, tx + tw.w / 2, ty + 1.2, "#6b5a45");
+      }
+      const stair = core.kind === "stair";
+      if (stair) stairNo += 1;
+      ctx.fillStyle = stair ? "rgba(90, 90, 90, 0.18)" : "rgba(44, 74, 110, 0.16)";
+      ctx.strokeStyle = selected ? "#1e1a16" : (stair ? "#555" : "#2c4a6e");
       ctx.lineWidth = (selected ? 2.6 : 1.8) / camera.scale;
       ctx.fillRect(core.x, core.y, core.w, core.d);
       ctx.strokeRect(core.x, core.y, core.w, core.d);
-      label(ctx, `코어 ${index + 1}`, core.x + core.w / 2, core.y + core.d / 2, "#2c4a6e");
+      const name = stair
+        ? `계단 ${stairNo}`
+        : (building ? building.name : `코어 ${index + 1}`);
+      label(ctx, name, core.x + core.w / 2, core.y + core.d / 2, stair ? "#444" : "#2c4a6e");
     });
 
     if (shown("column")) {
@@ -409,6 +433,25 @@ function drawOpening(ctx, opening, color, text) {
   }
   const lift = opening.kind === "in" ? -1.5 : -2.7;
   label(ctx, text, 0, lift, color);
+  ctx.restore();
+}
+
+function hatchRect(ctx, x, y, w, d, fill) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, d);
+  ctx.clip();
+  ctx.fillStyle = fill;
+  ctx.fillRect(x, y, w, d);
+  ctx.strokeStyle = "rgba(107, 90, 69, 0.35)";
+  ctx.lineWidth = 0.8 / (ctx.getTransform?.().a || 1);
+  const step = 1.2;
+  for (let t = -d; t < w + d; t += step) {
+    ctx.beginPath();
+    ctx.moveTo(x + t, y);
+    ctx.lineTo(x + t + d, y + d);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
