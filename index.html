@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=263" />
+    <link rel="stylesheet" href="styles.css?v=264" />
     <script type="importmap">
       {
         "imports": {
@@ -28,7 +28,7 @@
         <li data-slide="1" class="on"><span>1</span>주소</li>
         <li data-slide="2"><span>2</span>용도</li>
         <li data-slide="3"><span>3</span>크기</li>
-        <li data-slide="4"><span>4</span>도로</li>
+        <li data-slide="4"><span>4</span>도로·이격</li>
         <li data-slide="5"><span>5</span>램프</li>
         <li data-slide="6"><span>6</span>코어</li>
         <li data-slide="7"><span>7</span>결과</li>
@@ -85,7 +85,7 @@
         <div id="context-map" class="cx-view"></div>
         <div id="context-2d" class="cx-view" hidden></div>
         <div id="context-3d" class="cx-view" hidden></div>
-        <p class="hint">지도: 왼쪽 드래그 = 영역 선택 · 오른쪽 드래그 = 이동 · 주황 = 대지 · 2D 배경 = 브이월드 지도</p>
+        <p class="hint">지도: 클릭/드래그 · 우클릭 이동 · 휠 확대·축소(줌 15+ 용도지역 색) · 주황 = 대지</p>
       </div>
     </main>
 
@@ -100,12 +100,14 @@
             <input id="project-name" type="text" value="주차장 개략 설계" />
           </label>
           <label>
-            대지 주소 <span class="info" tabindex="0" title="도로명 또는 지번 주소. 브이월드(국토교통부) 자료로 용도지역과 건폐율·용적률 상한을 찾아 줍니다.">ⓘ</span>
+            대지 주소 <span class="info" tabindex="0" title="도로명 또는 지번 주소. 브이월드·OpenStreetMap으로 좌표를 찾고, 용도지역은 국토계획 레이어(부동산·토지이음과 같은 공공 자료)로 맞춥니다. 지도에서 직접 고를 수도 있습니다.">ⓘ</span>
             <span class="addr-row">
               <input id="site-address" type="text" placeholder="예: 서울 노원구 공릉로 232" />
               <button type="button" id="zone-lookup" class="ghost tiny">용도지역 조회</button>
+              <button type="button" id="map-pick" class="ghost tiny">지도에서 찾기</button>
             </span>
           </label>
+          <p class="hint">주소 조회가 안 되면 «지도에서 찾기»로 위치를 클릭하세요. 휠로 확대하면 용도지역 색이 나뉩니다.</p>
           <div id="zone-result" class="zone-result" hidden></div>
           <div class="split column-row">
             <p id="zone-current" class="hint"></p>
@@ -308,8 +310,8 @@
 
 
         <section class="slide" data-slide="4" hidden>
-          <h2>도로 접한 변</h2>
-          <p class="slide-lead">차량이 들어오는 도로 방향을 고르세요.</p>
+          <h2>도로 · 대지 이격</h2>
+          <p class="slide-lead">차량이 들어오는 도로 방향과, 주차장 외벽에서 대지 경계까지의 이격(여유)을 정하세요.</p>
           <div class="field">
           <span class="field-label">도로 접한 변</span>
           <div class="choice" data-for="road-edge" role="group">
@@ -325,8 +327,24 @@
             <option value="e">동측 (오른쪽)</option>
           </select>
         </div>
-        
           <p class="hint">선택하면 미리보기에 도로변이 표시됩니다.</p>
+
+          <div class="field" id="site-setback-block">
+            <span class="field-label">대지와의 이격 거리 (m) <span class="info" tabindex="0" title="주차장 외곽(지하 외벽)에서 대지 경계선까지 거리. 외부 램프·법정 이격·조경 여유를 잡을 때 씁니다. 방향별로 다르면 아래 칸을 채우세요.">ⓘ</span></span>
+            <label class="tight">
+              공통 이격
+              <input id="site-margin-step4" type="number" min="0" max="80" step="0.1" value="20" />
+            </label>
+            <div class="split">
+              <label>북 <input id="margin-n-step4" type="number" min="0" max="80" step="0.1" placeholder="공통" /></label>
+              <label>남 <input id="margin-s-step4" type="number" min="0" max="80" step="0.1" placeholder="공통" /></label>
+            </div>
+            <div class="split">
+              <label>서 <input id="margin-w-step4" type="number" min="0" max="80" step="0.1" placeholder="공통" /></label>
+              <label>동 <input id="margin-e-step4" type="number" min="0" max="80" step="0.1" placeholder="공통" /></label>
+            </div>
+            <p id="setback-summary" class="hint"></p>
+          </div>
         </section>
 
 
@@ -623,7 +641,7 @@
         <button type="button" id="wizard-next" class="primary">다음</button>
       </nav>
       <select id="circulation" hidden><option value="ccw" selected>반시계</option></select>
-      <p class="note"><span class="hint">버전 2026-11-22 · r263</span></p>
+      <p class="note"><span class="hint">버전 2026-11-22 · r264</span></p>
     </aside>
     </div>
 
@@ -636,7 +654,7 @@
     <button id="plan-expand-hit" type="button" hidden>expand</button>
     <button id="collapse-plan" type="button" hidden>접기</button>
 
-    <script type="module" src="src/main.js?v=263"></script>
+    <script type="module" src="src/main.js?v=264"></script>
     <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>

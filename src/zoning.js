@@ -85,16 +85,66 @@ export function WMTS(layer = "Base") {
   return `https://xdworld.vworld.kr/2d/${map}/service/{z}/{x}/{y}.png`;
 }
 
-export function boxAround(x, y, half = 200) {
-  return { minX: x - half, minY: y - half, maxX: x + half, maxY: y + half };
+/** OpenStreetMap 타일 (브이월드 장애 시 배경) */
+export function OSM_URL() {
+  return "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
 }
 
+/** 용도지역 WMS가 보이기 시작하는 줌 (부동산·토지이음 앱과 비슷하게 필지 스케일) */
+export const ZONE_COLOR_ZOOM = 15;
+
+export function vworldKey() {
+  return VWORLD_KEY;
+}
+
+export function vworldDomain() {
+  return SERVICE_DOMAIN;
+}
+
+/** Leaflet WMS용 용도지역 레이어(도시·관리·농림·자연환경) — 색으로 구역 구분 */
+export function zoneWmsLayers() {
+  return ZONE_LAYERS.map((layer) => ({
+    id: layer,
+    layers: layer,
+    styles: layer,
+  }));
+}
+
+export function WMS_URL() {
+  return "https://api.vworld.kr/req/wms";
+}
+
+/** 경위도 점 기준 ±halfMeters 상자 (지도용 w/s/e/n) */
+export function boxAround(x, y, halfMeters = 200) {
+  const lat = Number(y) || 0;
+  const lon = Number(x) || 0;
+  const dLat = halfMeters / 111320;
+  const dLon = halfMeters / (111320 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  return { w: lon - dLon, e: lon + dLon, s: lat - dLat, n: lat + dLat };
+}
+
+/** bbox → 대략 m 단위 가로·세로 (경위도 w/e/s/n 또는 min/max) */
 export function boxSize(bbox) {
   if (!bbox) return { w: 0, d: 0 };
+  if (bbox.w != null && bbox.e != null) {
+    const cy = ((Number(bbox.s) || 0) + (Number(bbox.n) || 0)) / 2;
+    const kx = 111320 * Math.cos((cy * Math.PI) / 180);
+    const ky = 111320;
+    return {
+      w: Math.max(0, (Number(bbox.e) - Number(bbox.w)) * kx),
+      d: Math.max(0, (Number(bbox.n) - Number(bbox.s)) * ky),
+    };
+  }
   return {
-    w: Math.max(0, (bbox.maxX ?? bbox[2]) - (bbox.minX ?? bbox[0])),
-    d: Math.max(0, (bbox.maxY ?? bbox[3]) - (bbox.minY ?? bbox[1])),
+    w: Math.max(0, (bbox.maxX ?? bbox[2] ?? 0) - (bbox.minX ?? bbox[0] ?? 0)),
+    d: Math.max(0, (bbox.maxY ?? bbox[3] ?? 0) - (bbox.minY ?? bbox[1] ?? 0)),
   };
+}
+
+/** 토지이음(부동산·토지이용 열람)에서 같은 위치를 확인하는 링크 */
+export function eumLandUrl(x, y) {
+  if (x == null || y == null) return "https://www.eum.go.kr/web/ms/mz/map.jsp";
+  return `https://www.eum.go.kr/web/ms/mz/map.jsp?x=${encodeURIComponent(x)}&y=${encodeURIComponent(y)}`;
 }
 
 export function storyHeight(props = {}) {
@@ -186,6 +236,46 @@ function limitsFor(name) {
   return hit ? hit[1] : null;
 }
 
+async function nominatimFetch(url) {
+  const res = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      // Nominatim 이용 정책: 식별 가능한 User-Agent 필요
+      "User-Agent": "parking-designer/1.0 (local parking layout tool)",
+    },
+    referrerPolicy: "no-referrer",
+  });
+  if (!res.ok) throw new Error(`Nominatim HTTP ${res.status}`);
+  return res.json();
+}
+
+async function nominatimSearch(address) {
+  const q = encodeURIComponent(String(address || "").trim());
+  const url = `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&addressdetails=1&countrycodes=kr`;
+  const list = await nominatimFetch(url);
+  const hit = Array.isArray(list) ? list[0] : null;
+  if (!hit) {
+    const err = new Error("주소를 찾지 못했습니다");
+    err.notFound = true;
+    throw err;
+  }
+  return {
+    address: hit.display_name || address,
+    point: { x: Number(hit.lon), y: Number(hit.lat) },
+    source: "nominatim",
+  };
+}
+
+export async function reverseGeocode(x, y) {
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(y)}&lon=${encodeURIComponent(x)}&format=json&addressdetails=1&zoom=18`;
+  try {
+    const data = await nominatimFetch(url);
+    return data?.display_name || `${Number(y).toFixed(5)}, ${Number(x).toFixed(5)}`;
+  } catch (_) {
+    return `${Number(y).toFixed(5)}, ${Number(x).toFixed(5)}`;
+  }
+}
+
 async function geocodeAddress(address) {
   const q = encodeURIComponent(String(address || "").trim());
   const domain = encodeURIComponent(serviceDomain());
@@ -202,19 +292,26 @@ async function geocodeAddress(address) {
         return {
           address: data?.response?.refined?.text || address,
           point: { x: Number(point.x), y: Number(point.y) },
+          source: "vworld",
         };
       }
     } catch (err) {
       last = err;
     }
   }
-  if (last && last.response) {
-    const msg = last.response?.error?.text || last.response?.status || "주소를 찾지 못했습니다";
-    const error = new Error(msg);
-    error.notFound = true;
-    throw error;
+  // 브이월드 장애·키 문제 시 OpenStreetMap(Nominatim)으로 좌표만 확보 (부동산 앱도 동일하게 좌표→용도지역)
+  try {
+    return await nominatimSearch(address);
+  } catch (nomErr) {
+    if (nomErr && nomErr.notFound) throw nomErr;
+    if (last && last.response) {
+      const msg = last.response?.error?.text || last.response?.status || "주소를 찾지 못했습니다";
+      const error = new Error(msg);
+      error.notFound = true;
+      throw error;
+    }
+    throw last instanceof Error ? last : nomErr;
   }
-  throw last instanceof Error ? last : new Error("주소 조회에 실패했습니다");
 }
 
 async function zonesAtPoint(x, y) {
@@ -241,34 +338,65 @@ async function zonesAtPoint(x, y) {
   return names;
 }
 
+function packZones(zones) {
+  const limits = {};
+  (zones || []).forEach((z) => {
+    const lim = limitsFor(z);
+    if (lim) limits[z] = lim;
+  });
+  return limits;
+}
+
+/** 좌표로 용도지역·주소 조회 (지도 클릭용) */
+export async function lookupZoningAt(x, y, hintAddress = "") {
+  const address = hintAddress || (await reverseGeocode(x, y));
+  let zones = [];
+  try {
+    zones = await zonesAtPoint(x, y);
+  } catch (_) {
+    zones = [];
+  }
+  return {
+    address,
+    point: { x: Number(x), y: Number(y) },
+    zones,
+    limits: packZones(zones),
+    notFound: false,
+    offline: zones.length === 0,
+    eumUrl: eumLandUrl(x, y),
+    source: "map",
+  };
+}
+
 export async function lookupZoning(address) {
   const text = String(address || "").trim();
   if (!text) throw new Error("주소가 비어 있습니다");
 
   try {
     const geo = await geocodeAddress(text);
-    const zones = await zonesAtPoint(geo.point.x, geo.point.y);
-    const limits = {};
-    zones.forEach((z) => {
-      const lim = limitsFor(z);
-      if (lim) limits[z] = lim;
-    });
+    let zones = [];
+    try {
+      zones = await zonesAtPoint(geo.point.x, geo.point.y);
+    } catch (_) {
+      zones = [];
+    }
     return {
       address: geo.address,
       point: geo.point,
       zones,
-      limits,
+      limits: packZones(zones),
       notFound: false,
-      offline: false,
+      offline: zones.length === 0 && geo.source === "nominatim",
+      eumUrl: eumLandUrl(geo.point.x, geo.point.y),
+      source: geo.source || "vworld",
     };
   } catch (err) {
-    // 네트워크/키 문제 시에도 지역 추정은 가능하게
     if (err && err.notFound) {
       return { address: text, zones: [], limits: {}, notFound: true, point: null };
     }
     const region = regionFromAddress(text);
     const soft = new Error(
-      `${err && err.message ? err.message : "조회 실패"}. 브이월드에 연결하지 못해 주소로 지역만 추정했습니다. 상세 입력에서 용도지역을 직접 고르세요.`,
+      `${err && err.message ? err.message : "조회 실패"}. 브이월드·지도 검색에 연결하지 못해 주소로 지역만 추정했습니다. «지도에서 찾기»로 위치를 고르거나 상세 입력에서 용도지역을 직접 고르세요.`,
     );
     soft.offline = true;
     soft.fallback = {
@@ -280,6 +408,7 @@ export async function lookupZoning(address) {
       offline: true,
       region,
       note: soft.message,
+      eumUrl: eumLandUrl(),
     };
     throw soft;
   }

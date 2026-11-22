@@ -1,11 +1,11 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=263";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=263";
-import { drawThumb, mountPlan } from "./plan.js?v=263";
-import { stallRuleTargets } from "./stallTypes.js?v=263";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=263";
-import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=263";
-import { bindContextDialog, closeContext, openContext } from "./context.js?v=263";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=263";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=264";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=264";
+import { drawThumb, mountPlan } from "./plan.js?v=264";
+import { stallRuleTargets } from "./stallTypes.js?v=264";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=264";
+import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=264";
+import { bindContextDialog, closeContext, openContext, openSitePicker, updatePickerMarker } from "./context.js?v=264";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=264";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -16,7 +16,7 @@ const WIZARD_LABELS = {
   1: "주소를 입력한 뒤 다음으로 진행하세요.",
   2: "용도와 건물 형태를 고른 뒤 다음으로 진행하세요.",
   3: "주차장 크기·기둥 간격·층고를 정하세요.",
-  4: "도로가 접한 변을 고르세요.",
+  4: "도로가 접한 변과 대지 이격을 고르세요.",
   5: "램프를 배치하고 왼쪽 평면에서 위치를 조정하세요.",
   6: "코어를 배치하고 왼쪽 평면에서 위치를 조정하세요.",
   7: "추천 후보 3안을 비교해 고르세요.",
@@ -105,17 +105,26 @@ $("eco-rate").addEventListener("change", () => {
   state.stallRules = { ...state.stallRules, ecoRate: pct / 100 };
   render();
 });
-$("site-margin").addEventListener("input", () => {
-  updateSiteMargins(numberOr($("site-margin").value, state.siteMargin));
-});
-["n", "s", "e", "w"].forEach((k) => {
-  $(`margin-${k}`).addEventListener("input", () => {
-    const v = $(`margin-${k}`).value.trim();
-    updateSiteMargins(null, { [k]: v === "" ? null : Math.max(0, numberOr(v, 0)) });
+function bindMarginInput(id, key) {
+  const el = $(id);
+  if (!el) return;
+  el.addEventListener("input", () => {
+    if (key) {
+      const v = el.value.trim();
+      updateSiteMargins(null, { [key]: v === "" ? null : Math.max(0, numberOr(v, 0)) });
+    } else {
+      updateSiteMargins(numberOr(el.value, state.siteMargin));
+    }
   });
+}
+bindMarginInput("site-margin", null);
+bindMarginInput("site-margin-step4", null);
+["n", "s", "e", "w"].forEach((k) => {
+  bindMarginInput(`margin-${k}`, k);
+  bindMarginInput(`margin-${k}-step4`, k);
 });
-$("open-margin-dialog").addEventListener("click", () => $("margin-dialog").showModal());
-$("close-margin-dialog").addEventListener("click", () => { $("margin-dialog").close(); render(); });
+$("open-margin-dialog")?.addEventListener("click", () => $("margin-dialog").showModal());
+$("close-margin-dialog")?.addEventListener("click", () => { $("margin-dialog").close(); render(); });
 $("road-edge").addEventListener("change", () => {
   state.roadEdge = $("road-edge").value;
   if (state.plate) {
@@ -598,7 +607,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=263")
+    sceneMount = import("./scene.js?v=264")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -823,6 +832,21 @@ function render() {
   setIfIdle($("column-size"), state.columnWidth);
   if (document.activeElement !== $("min-clear")) $("min-clear").value = Number(state.minClear).toFixed(2);
   setIfIdle($("site-margin"), state.siteMargin);
+  setIfIdle($("site-margin-step4"), state.siteMargin);
+  {
+    const sm = state.siteMargins || {};
+    ["n", "s", "e", "w"].forEach((k) => {
+      const a = $(`margin-${k}`);
+      const b = $(`margin-${k}-step4`);
+      const val = sm[k] == null ? "" : String(sm[k]);
+      if (a && document.activeElement !== a) a.value = val;
+      if (b && document.activeElement !== b) b.value = val;
+    });
+    const show = (k) => (sm[k] == null ? `${state.siteMargin}` : `${sm[k]}*`);
+    if ($("setback-summary")) {
+      $("setback-summary").textContent = `북 ${show("n")} · 남 ${show("s")} · 서 ${show("w")} · 동 ${show("e")} m${["n", "s", "e", "w"].some((k) => sm[k] != null) ? " (*방향별)" : ""}`;
+    }
+  }
   if (document.activeElement !== $("ramp-placement")) $("ramp-placement").value = state.rampPlacement;
   if (document.activeElement !== $("ramp-form")) $("ramp-form").value = state.rampForm || "auto";
   if ($("lower-ramp-form") && document.activeElement !== $("lower-ramp-form")) {
@@ -831,11 +855,13 @@ function render() {
   if (document.activeElement !== $("lower-ramp-mode")) $("lower-ramp-mode").value = state.lowerRampMode || "alternate";
   if (document.activeElement !== $("road-edge")) $("road-edge").value = state.roadEdge;
   renderRampPos();
-  $("site-margin-row").hidden = state.rampPlacement !== "external";
+  if ($("site-margin-row")) $("site-margin-row").hidden = state.rampPlacement !== "external";
   {
     const sm = state.siteMargins || {};
     const show = (k) => (sm[k] == null ? `${state.siteMargin}` : `${sm[k]}*`);
-    $("margin-summary").textContent = `북 ${show("n")} · 남 ${show("s")} · 서 ${show("w")} · 동 ${show("e")} m${["n", "s", "e", "w"].some((k) => sm[k] != null) ? " (*방향별)" : ""}`;
+    if ($("margin-summary")) {
+      $("margin-summary").textContent = `북 ${show("n")} · 남 ${show("s")} · 서 ${show("w")} · 동 ${show("e")} m${["n", "s", "e", "w"].some((k) => sm[k] != null) ? " (*방향별)" : ""}`;
+    }
   }
   if (state.rampPlacement !== "external") state.entranceMode = "integrated";
   $("entrance-mode").disabled = state.rampPlacement !== "external";
@@ -1175,76 +1201,98 @@ function buildDemandForm() {
     $("suggest-note").textContent = `→ ${rec.width}×${rec.depth}m (${demand.legalStalls}대 × ${demand.areaPerStall}㎡ ÷ ${demand.plannedFloors}층)`;
     emit();
   });
-  // 주소 → 용도지역 조회(브이월드). 결과를 보여 주고, 목록에 있는 용도지역·지역이면 선택칸도 맞춘다.
+  // 주소 → 용도지역 조회(브이월드 + OSM 폴백). 지도 클릭으로도 채운다.
   const squash = (s) => String(s || "").replace(/\s+/g, "");
+  const applyZoningResult = async (r, { openMap = true } = {}) => {
+    const box = $("zone-result");
+    box.hidden = false;
+    state.demand.siteAddress = r.address;
+    state.demand.siteZones = r.zones || [];
+    if (r.address) $("site-address").value = r.address;
+    const region = regionFromAddress(r.address);
+    if (region) {
+      $("region").value = region;
+      $("region").disabled = true;
+      $("zone-auto").hidden = false;
+    }
+    const eum = r.eumUrl || (r.point ? eumLandUrl(r.point.x, r.point.y) : eumLandUrl());
+    const eumLine = `<p class="note"><a href="${eum}" target="_blank" rel="noopener">토지이음·부동산 열람에서 용도지역 확인</a></p>`;
+
+    if (r.notFound) {
+      box.className = "zone-result warn";
+      box.innerHTML = `<p>주소를 찾지 못했습니다. «지도에서 찾기»로 위치를 고르거나 도로명·지번을 다시 넣어 보세요.</p>${eumLine}`;
+      return;
+    }
+
+    let site = null;
+    if (r.point) {
+      try { site = await parcelAt(r.point.x, r.point.y); } catch (_) { site = null; }
+    }
+    let access = null;
+    try { access = await roadAccess(site); } catch (_) { access = null; }
+    if (access && access.main) {
+      $("road-edge").value = access.main;
+      $("road-edge").dispatchEvent(new Event("change"));
+    }
+
+    if (!r.zones.length) {
+      box.className = "zone-result warn";
+      $("zone").disabled = false;
+      box.innerHTML = `<p>${r.address}</p><p>좌표는 찾았습니다. 용도지역 레이어를 아직 받지 못했습니다. 지도에서 줌인(15+)해 색을 확인하거나 «상세 입력»·토지이음에서 고르세요.</p>${eumLine}`
+        + (r.point ? `<p class="cx-open"><button type="button" class="ghost tiny" data-cx="map">지도 열기</button></p>` : "");
+      box.querySelectorAll("[data-cx]").forEach((b) => b.addEventListener("click", () => openContext(r.point, site, "map", r.address, access)));
+      if (openMap && r.point) openContext(r.point, site, "map", r.address, access);
+      read();
+      return;
+    }
+
+    const lines = r.zones.map((z) => {
+      const l = r.limits[z];
+      return `<li><b>${z}</b>${l ? ` · 건폐율 ${l.bcr}% 이하 · 용적률 ${l.far}% 이하` : ""}</li>`;
+    }).join("");
+    const multi = r.zones.length > 1 ? "<p>필지가 둘 이상의 용도지역에 걸쳐 있을 수 있습니다.</p>" : "";
+    const fmt = (v) => Math.round(v).toLocaleString("ko-KR");
+    const lim = r.limits[r.zones[0]];
+    const areaLine = site && site.area
+      ? `<p>필지 ${site.address || ""}${site.jimok ? ` · ${site.jimok}` : ""} · <b>대지면적 ${fmt(site.area)}㎡</b>${lim ? ` → 건축면적 상한 약 ${fmt(site.area * lim.bcr / 100)}㎡ · 연면적 상한 약 ${fmt(site.area * lim.far / 100)}㎡` : ""}</p>`
+      : "";
+    const accessLine = access && access.sides && access.sides.length
+      ? `<p>도로 접면: ${access.sides.map((sd) => `<b>${sd.label}</b> 약 ${sd.len}m`).join(" · ")}</p>`
+      : "";
+    const src = r.source === "nominatim" ? "OpenStreetMap" : r.source === "map" ? "지도 선택" : "브이월드";
+    box.className = "zone-result";
+    box.innerHTML = `<p>${r.address} <span class="hint">(${src})</span></p><ul>${lines}</ul>${multi}${areaLine}${accessLine}`
+      + `<p class="note">건폐율·용적률은 국토계획법 시행령 상한입니다. 실제 값은 시·군 조례로 더 낮을 수 있습니다.</p>${eumLine}`
+      + `<p class="cx-open">주변 보기 <button type="button" class="ghost tiny" data-cx="map">지도</button> <button type="button" class="ghost tiny" data-cx="2d">2D</button> <button type="button" class="ghost tiny" data-cx="3d">3D</button></p>`;
+    box.querySelectorAll("[data-cx]").forEach((b) => b.addEventListener("click", () => openContext(r.point, site, b.dataset.cx, r.address, access)));
+    if (openMap && r.point) openContext(r.point, site, "map", r.address, access);
+
+    const hit = Object.entries(zoneFactors).find(([, z]) => r.zones.some((name) => squash(name) === squash(z.label)));
+    if (hit) $("zone").value = hit[0];
+    if (region) $("region").value = region;
+    $("zone").disabled = Boolean(hit);
+    $("region").disabled = Boolean(region);
+    $("zone-auto").hidden = !(hit || region);
+    read();
+  };
+
   const lookup = async () => {
     const address = $("site-address").value.trim();
     const box = $("zone-result");
-    if (!address) { box.hidden = false; box.className = "zone-result warn"; box.textContent = "주소를 넣어 주세요."; return; }
+    if (!address) {
+      box.hidden = false;
+      box.className = "zone-result warn";
+      box.innerHTML = `주소를 넣거나 <button type="button" class="ghost tiny" id="zone-open-map-hint">지도에서 찾기</button>를 누르세요.`;
+      $("zone-open-map-hint")?.addEventListener("click", () => $("map-pick").click());
+      return;
+    }
     box.hidden = false;
     box.className = "zone-result";
     box.textContent = "조회 중…";
     $("zone-lookup").disabled = true;
     try {
       const r = await lookupZoning(address);
-      state.demand.siteAddress = r.address;
-      state.demand.siteZones = r.zones;
-      if (r.notFound) {
-        box.className = "zone-result warn";
-        box.textContent = "주소를 찾지 못했습니다. 도로명(예: 공릉로 232) 또는 지번(예: 공릉동 172)으로 다시 넣어 보세요.";
-        return;
-      }
-      if (!r.zones.length) {
-        box.className = "zone-result warn";
-        const region = regionFromAddress(r.address);
-        if (region) {
-          $("region").value = region;
-          $("region").disabled = true;
-          $("zone-auto").hidden = false;
-        }
-        $("zone").disabled = false;
-        box.innerHTML = `<p>${r.address}</p><p>좌표는 찾았지만 용도지역 레이어 자료가 없습니다. «상세 입력»에서 용도지역을 직접 고르세요.</p>`;
-        read();
-        return;
-      }
-      const lines = r.zones.map((z) => {
-        const l = r.limits[z];
-        return `<li><b>${z}</b>${l ? ` · 건폐율 ${l.bcr}% 이하 · 용적률 ${l.far}% 이하` : ""}</li>`;
-      }).join("");
-      const multi = r.zones.length > 1 ? "<p>필지가 둘 이상의 용도지역에 걸쳐 있을 수 있습니다.</p>" : "";
-      // 필지·대지면적(토지특성, 필지 1개 기준). 실패해도 용도지역 결과는 그대로 보여 준다.
-      let site = null;
-      try { site = await parcelAt(r.point.x, r.point.y); } catch (e) { site = null; }
-      const fmt = (v) => Math.round(v).toLocaleString("ko-KR");
-      const lim = r.limits[r.zones[0]];
-      const areaLine = site && site.area
-        ? `<p>필지 ${site.address || ""}${site.jimok ? ` · ${site.jimok}` : ""} · <b>대지면적 ${fmt(site.area)}㎡</b> (필지 1개 기준)${lim ? ` → 건축면적 상한 약 ${fmt(site.area * lim.bcr / 100)}㎡ · 연면적 상한 약 ${fmt(site.area * lim.far / 100)}㎡` : ""}</p>`
-        : "";
-      // 도로 접면: 대지 필지 변 중 도로(지목 '도') 필지에 붙은 변
-      let access = null;
-      try { access = await roadAccess(site); } catch (e) { access = null; }
-      const accessLine = access && access.sides.length
-        ? `<p>도로 접면: ${access.sides.map((sd) => `<b>${sd.label}</b> 약 ${sd.len}m${sd.names.length ? `(${sd.names.join("·")})` : ""}`).join(" · ")}</p>`
-        : (site ? "<p>도로 접면: 지적도에서 붙은 도로 필지를 찾지 못했습니다(진입로가 다른 필지일 수 있음).</p>" : "");
-      if (access && access.main) {
-        $("road-edge").value = access.main;
-        $("road-edge").dispatchEvent(new Event("change"));
-      }
-      box.innerHTML = `<p>${r.address}</p><ul>${lines}</ul>${multi}${areaLine}${accessLine}<p class="note">건폐율·용적률은 국토계획법 시행령 상한입니다. 실제 값은 시·군 조례로 더 낮을 수 있습니다.</p>`
-        + `<p class="cx-open">주변 매스 보기 <button type="button" class="ghost tiny" data-cx="map">지도</button> <button type="button" class="ghost tiny" data-cx="2d">2D</button> <button type="button" class="ghost tiny" data-cx="3d">3D</button></p>`;
-      box.querySelectorAll("[data-cx]").forEach((b) => b.addEventListener("click", () => openContext(r.point, site, b.dataset.cx, r.address, access)));
-      // 조건 단계에서는 오른쪽이 비어 있으니 조회하자마자 지도를 바로 띄운다(영역을 고른 뒤 2D/3D).
-      openContext(r.point, site, "map", r.address, access);
-      // 선택칸 맞추기
-      const hit = Object.entries(zoneFactors).find(([, z]) => r.zones.some((name) => squash(name) === squash(z.label)));
-      if (hit) $("zone").value = hit[0];
-      const region = regionFromAddress(r.address);
-      if (region) $("region").value = region;
-      // 맞춘 칸은 잠그고 '주소로 자동' 표시. 풀려면 '직접 수정'.
-      $("zone").disabled = Boolean(hit);
-      $("region").disabled = Boolean(region);
-      $("zone-auto").hidden = !(hit || region);
-      read();
+      await applyZoningResult(r);
     } catch (e) {
       box.className = "zone-result warn";
       const fallback = e && e.fallback;
@@ -1257,16 +1305,38 @@ function buildDemandForm() {
           $("zone-auto").hidden = false;
         }
         $("zone").disabled = false;
-        box.innerHTML = `<p>${fallback.address}</p><p>${e.message}</p><p class="note">용도지역은 «상세 입력»에서 직접 선택할 수 있습니다.</p>`;
+        const eum = fallback.eumUrl || eumLandUrl();
+        box.innerHTML = `<p>${fallback.address}</p><p>${e.message}</p>`
+          + `<p class="note">«지도에서 찾기»로 위치를 고르거나 <a href="${eum}" target="_blank" rel="noopener">토지이음</a>·상세 입력에서 용도지역을 고르세요.</p>`;
         read();
       } else {
-        box.textContent = `조회 실패: ${e && e.message ? e.message : e}. 네트워크·브이월드 연결을 확인해 주세요. «상세 입력»에서 용도지역을 직접 고를 수 있습니다.`;
+        box.textContent = `조회 실패: ${e && e.message ? e.message : e}. «지도에서 찾기» 또는 상세 입력을 이용해 주세요.`;
       }
     } finally {
       $("zone-lookup").disabled = false;
     }
   };
   $("zone-lookup").addEventListener("click", lookup);
+  $("map-pick").addEventListener("click", () => {
+    const box = $("zone-result");
+    box.hidden = false;
+    box.className = "zone-result";
+    box.textContent = "지도에서 대지를 클릭하세요. 휠로 확대하면 용도지역 색이 보입니다.";
+    const known = state.demand?.sitePoint || null;
+    openSitePicker(known, async (pt) => {
+      box.textContent = "선택한 위치 조회 중…";
+      updatePickerMarker(pt, "선택 중…");
+      try {
+        const r = await lookupZoningAt(pt.x, pt.y);
+        state.demand.sitePoint = r.point;
+        updatePickerMarker(r.point, r.zones[0] || r.address);
+        await applyZoningResult(r, { openMap: false });
+      } catch (e) {
+        box.className = "zone-result warn";
+        box.textContent = `지도 조회 실패: ${e && e.message ? e.message : e}`;
+      }
+    });
+  });
   bindContextDialog();
   // 용도지역·지역 선택칸은 '상세 입력'을 열어야 보인다. 평소에는 현재 값만 한 줄로 보여 준다.
   $("open-zone-detail").addEventListener("click", () => {
@@ -1417,6 +1487,7 @@ function numberOr(value, fallback) {
 }
 
 function setIfIdle(input, value) {
+  if (!input) return;
   if (document.activeElement === input) return;
   input.value = String(Math.round(value * 10) / 10);
 }

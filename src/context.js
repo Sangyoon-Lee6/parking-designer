@@ -2,17 +2,39 @@
 // 2D(평면) 또는 3D(높이만큼 세운 매스)로 보여 준다. 지도는 Leaflet(전역 L) + 브이월드 WMTS 타일.
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { MAX_FEATURES, WMTS, boxAround, boxSize, buildingHeight, heightEstimated, isRoadParcel, lineParts, realRoads, localizer, outerRings, storyHeight, surroundingsBox } from "./zoning.js?v=263";
+import {
+  MAX_FEATURES,
+  OSM_URL,
+  WMTS,
+  WMS_URL,
+  ZONE_COLOR_ZOOM,
+  boxAround,
+  boxSize,
+  buildingHeight,
+  heightEstimated,
+  isRoadParcel,
+  lineParts,
+  realRoads,
+  localizer,
+  outerRings,
+  storyHeight,
+  surroundingsBox,
+  vworldDomain,
+  vworldKey,
+  zoneWmsLayers,
+} from "./zoning.js?v=264";
 
 const $ = (id) => document.getElementById(id);
 const MAX_SIDE = 1000;   // 영역 한 변 최대(m). 브이월드가 레이어당 1,000개까지만 준다.
 
-let ctx = null;        // { point, site, title, bbox }
+let ctx = null;        // { point, site, title, bbox, pickMode, onPick }
 let cache = null;      // { key, data }
 let three = null;      // { renderer, controls, frame }
 let map = null;        // Leaflet 지도
 let rect = null;       // 선택 영역 사각형
 let marker = null;
+let zoneOverlay = null;
+let zoneLegendEl = null;
 
 // ── 데이터 → 로컬 m 좌표 ──
 function prepare(data, site) {
@@ -371,21 +393,117 @@ function finishRect(raw) {
   setMode("2d");
 }
 
-// 왼쪽 드래그 = 영역 그리기, 오른쪽 드래그 = 지도 이동, 휠 = 확대·축소
+function ensureZoneOverlay() {
+  const L = window.L;
+  if (!map || zoneOverlay) return zoneOverlay;
+  const layers = {};
+  zoneWmsLayers().forEach((z) => {
+    layers[z.id] = L.tileLayer.wms(WMS_URL(), {
+      version: "1.3.0",
+      layers: z.layers,
+      styles: z.styles,
+      format: "image/png",
+      transparent: true,
+      opacity: 0.55,
+      maxZoom: 21,
+      minZoom: ZONE_COLOR_ZOOM,
+      key: vworldKey(),
+      domain: vworldDomain(),
+      attribution: "용도지역 © 브이월드",
+    });
+  });
+  zoneOverlay = L.layerGroup();
+  Object.values(layers).forEach((ly) => zoneOverlay.addLayer(ly));
+  return zoneOverlay;
+}
+
+function syncZoneOverlay() {
+  if (!map) return;
+  const group = ensureZoneOverlay();
+  const show = map.getZoom() >= ZONE_COLOR_ZOOM;
+  if (show) {
+    if (!map.hasLayer(group)) group.addTo(map);
+  } else if (map.hasLayer(group)) {
+    map.removeLayer(group);
+  }
+  if (zoneLegendEl) zoneLegendEl.hidden = !show;
+  const status = $("context-status");
+  if (status && ctx && ctx.pickMode) {
+    status.textContent = show
+      ? `줌 ${map.getZoom()} · 용도지역 색 표시 중. 필지를 클릭하면 주소·용도지역을 채웁니다. (휠=확대/축소)`
+      : `줌 ${map.getZoom()} · 휠로 ${ZONE_COLOR_ZOOM} 이상 확대하면 용도지역 색이 나타납니다. 클릭=위치 선택 · 우클릭 드래그=이동`;
+  }
+}
+
+function ensureZoneLegend() {
+  if (zoneLegendEl || !map) return;
+  const L = window.L;
+  const Control = L.Control.extend({
+    onAdd() {
+      const div = L.DomUtil.create("div", "cx-zone-legend");
+      div.innerHTML = `
+        <strong>용도지역</strong>
+        <span class="z-res">주거</span>
+        <span class="z-com">상업</span>
+        <span class="z-ind">공업</span>
+        <span class="z-grn">녹지·관리</span>
+        <em>줌 ${ZONE_COLOR_ZOOM}+</em>`;
+      div.hidden = true;
+      zoneLegendEl = div;
+      L.DomEvent.disableClickPropagation(div);
+      return div;
+    },
+  });
+  map.addControl(new Control({ position: "bottomleft" }));
+}
+
+// 왼쪽 드래그 = 영역 그리기(주변 매스) / 클릭 = 대지 선택(찾기 모드)
+// 오른쪽 드래그 = 지도 이동, 휠 = 확대·축소
 function ensureMap() {
   const L = window.L;
   if (!L) throw new Error("지도 라이브러리(Leaflet)를 불러오지 못했습니다");
   if (map) return map;
-  map = L.map("context-map", { zoomControl: true, attributionControl: true, dragging: false, boxZoom: false, doubleClickZoom: false });
-  const opts = { maxZoom: 19, minZoom: 6, referrerPolicy: "no-referrer", attribution: "© 브이월드(국토교통부)" };
-  const base = L.tileLayer(WMTS("Base"), opts).addTo(map);
+  map = L.map("context-map", {
+    zoomControl: true,
+    attributionControl: true,
+    dragging: false,
+    boxZoom: false,
+    doubleClickZoom: false,
+    scrollWheelZoom: true,
+    minZoom: 6,
+    maxZoom: 20,
+  });
+  const opts = { maxZoom: 20, maxNativeZoom: 19, minZoom: 6, referrerPolicy: "no-referrer", attribution: "© 브이월드(국토교통부)" };
+  const base = L.tileLayer(WMTS("Base"), opts);
   const sat = L.tileLayer(WMTS("Satellite"), opts);
-  L.control.layers({ "일반지도": base, "위성사진": sat }, null, { position: "topright" }).addTo(map);
+  const osm = L.tileLayer(OSM_URL(), {
+    maxZoom: 20,
+    attribution: "© OpenStreetMap",
+  });
+  // 브이월드 타일이 안 뜨면 OSM이 보이도록 둘 다 올릴 수 있게 — 기본은 일반지도
+  base.addTo(map);
+  base.on("tileerror", () => {
+    if (!map.hasLayer(osm)) osm.addTo(map);
+  });
+  L.control.layers(
+    { "일반지도": base, "위성사진": sat, "OSM": osm },
+    null,
+    { position: "topright" },
+  ).addTo(map);
+
+  ensureZoneOverlay();
+  ensureZoneLegend();
+  map.on("zoomend", syncZoneOverlay);
+  map.on("zoom", syncZoneOverlay);
 
   const el = $("context-map");
   el.addEventListener("contextmenu", (e) => e.preventDefault());
+  // 휠 줌이 폼 스크롤로 새지 않게
+  el.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
+
   let pan = null;
   let start = null;
+  let moved = false;
   el.addEventListener("mousedown", (e) => {
     if (e.target.closest(".leaflet-control")) return;
     if (e.button === 2) {
@@ -394,7 +512,10 @@ function ensureMap() {
       e.preventDefault();
     } else if (e.button === 0) {
       start = map.mouseEventToLatLng(e);
-      setRect({ w: start.lng, e: start.lng, s: start.lat, n: start.lat });
+      moved = false;
+      if (!ctx?.pickMode) {
+        setRect({ w: start.lng, e: start.lng, s: start.lat, n: start.lat });
+      }
       e.preventDefault();
     }
   });
@@ -402,17 +523,28 @@ function ensureMap() {
     if (pan) {
       map.panBy([pan.x - e.clientX, pan.y - e.clientY], { animate: false });
       pan = { x: e.clientX, y: e.clientY };
-    } else if (start) {
+    } else if (start && !ctx?.pickMode) {
+      moved = true;
       setRect(toBox(L.latLngBounds(start, map.mouseEventToLatLng(e))));
+    } else if (start && ctx?.pickMode) {
+      const cur = map.mouseEventToLatLng(e);
+      if (Math.hypot(cur.lat - start.lat, cur.lng - start.lng) > 0.00005) moved = true;
     }
   });
   window.addEventListener("mouseup", (e) => {
     if (pan) { pan = null; el.classList.remove("panning"); }
-    if (start) {
-      const raw = toBox(L.latLngBounds(start, map.mouseEventToLatLng(e)));
-      start = null;
-      finishRect(raw);
+    if (!start) return;
+    const end = map.mouseEventToLatLng(e);
+    const from = start;
+    start = null;
+    if (ctx?.pickMode) {
+      if (!moved && typeof ctx.onPick === "function") {
+        ctx.onPick({ x: end.lng, y: end.lat });
+      }
+      return;
     }
+    const raw = toBox(L.latLngBounds(from, end));
+    finishRect(raw);
   });
   return map;
 }
@@ -458,8 +590,11 @@ async function setMode(mode) {
   $("context-area").hidden = mode !== "map";
   if (mode !== "3d") stop3d();
   if (mode === "map") {
-    $("context-status").textContent = "왼쪽 드래그 = 영역 선택 · 오른쪽 드래그 = 지도 이동 · 휠 = 확대/축소 → 2D·3D로 보기 (한 변 최대 1km)";
+    $("context-status").textContent = ctx?.pickMode
+      ? `클릭 = 대지 선택 · 우클릭 드래그 = 이동 · 휠 = 확대/축소 (줌 ${ZONE_COLOR_ZOOM}+ 에서 용도지역 색)`
+      : "왼쪽 드래그 = 영역 선택 · 오른쪽 드래그 = 지도 이동 · 휠 = 확대/축소 → 2D·3D로 보기 (한 변 최대 1km)";
     showMap();
+    syncZoneOverlay();
     return;
   }
   $("context-status").textContent = "선택 영역의 필지·건물을 불러오는 중…";
@@ -480,22 +615,88 @@ async function setMode(mode) {
 
 // point: {x, y} 경위도, site: parcelAt() 결과(없어도 됨), mode: "map" | "2d" | "3d"
 export function openContext(point, site, mode = "map", title = "", access = null) {
-  const same = ctx && ctx.point.x === point.x && ctx.point.y === point.y;
-  if (!same) { ctx = { point, site, title, access, bbox: boxAround(point.x, point.y, 200), viewSet: false }; cache = null; }
-  else { ctx.site = site || ctx.site; ctx.access = access || ctx.access; }
+  const same = ctx && ctx.point && ctx.point.x === point.x && ctx.point.y === point.y && !ctx.pickMode;
+  if (!same) {
+    ctx = { point, site, title, access, bbox: boxAround(point.x, point.y, 200), viewSet: false, pickMode: false, onPick: null };
+    cache = null;
+  } else {
+    ctx.site = site || ctx.site;
+    ctx.access = access || ctx.access;
+    ctx.pickMode = false;
+    ctx.onPick = null;
+  }
   $("context-title").textContent = title ? `주변 매스 · ${title}` : "주변 매스";
   $("context-view").hidden = false;
   setMode(mode);
 }
 
+/**
+ * 주소 단계용: 지도를 열고 클릭한 지점을 onPick({x,y})로 돌려준다.
+ * point가 없으면 서울 시청 근처를 기본으로 연다.
+ */
+export function openSitePicker(point, onPick, title = "지도에서 대지 찾기") {
+  const p = point && Number.isFinite(point.x) && Number.isFinite(point.y)
+    ? point
+    : { x: 126.978, y: 37.5665 };
+  ctx = {
+    point: p,
+    site: null,
+    title,
+    access: null,
+    bbox: boxAround(p.x, p.y, 400),
+    viewSet: false,
+    pickMode: true,
+    onPick: typeof onPick === "function" ? onPick : null,
+  };
+  cache = null;
+  $("context-title").textContent = title;
+  $("context-view").hidden = false;
+  // 찾기 모드에서는 지도만
+  ["map", "2d", "3d"].forEach((k) => {
+    $(`context-${k}`).hidden = k !== "map";
+    $(`context-mode-${k}`).classList.toggle("on", k === "map");
+    if (k !== "map") $(`context-mode-${k}`).hidden = true;
+  });
+  $("context-area").hidden = true;
+  setMode("map");
+  // 모드 버튼 다시 보이기 위해 close 시 복구
+}
+
 export function closeContext() {
   stop3d();
   $("context-view").hidden = true;
+  if (ctx) {
+    ctx.pickMode = false;
+    ctx.onPick = null;
+  }
+  ["2d", "3d"].forEach((k) => {
+    const btn = $(`context-mode-${k}`);
+    if (btn) btn.hidden = false;
+  });
+}
+
+export function updatePickerMarker(point, label = "") {
+  if (!point || !map) return;
+  ctx = ctx || {};
+  ctx.point = point;
+  const L = window.L;
+  if (marker) marker.setLatLng([point.y, point.x]);
+  else marker = L.circleMarker([point.y, point.x], { radius: 6, color: "#7a3e0a", weight: 2, fillColor: "#e8a25c", fillOpacity: 1, interactive: false }).addTo(map);
+  marker.unbindTooltip();
+  marker.bindTooltip(label || "선택한 대지", { permanent: true, direction: "top", offset: [0, -8], className: "cx-tip" });
+  map.panTo([point.y, point.x]);
+  syncZoneOverlay();
 }
 
 export function bindContextDialog() {
   $("context-close").addEventListener("click", closeContext);
   $("context-mode-map").addEventListener("click", () => setMode("map"));
-  $("context-mode-2d").addEventListener("click", () => setMode("2d"));
-  $("context-mode-3d").addEventListener("click", () => setMode("3d"));
+  $("context-mode-2d").addEventListener("click", () => {
+    if (ctx?.pickMode) return;
+    setMode("2d");
+  });
+  $("context-mode-3d").addEventListener("click", () => {
+    if (ctx?.pickMode) return;
+    setMode("3d");
+  });
 }

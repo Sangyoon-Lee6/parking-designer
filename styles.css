@@ -767,6 +767,41 @@ body.step-result .context-view {
 .cx-access { stroke: #dc2626; stroke-width: 5; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .cx-roadname { fill: #475569; font-weight: 600; paint-order: stroke; stroke: #f8fafc; }
 .cx-roadline { fill: none; stroke: #cbd5e1; stroke-linecap: round; stroke-linejoin: round; }
+
+.cx-zone-legend {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 2px;
+}
+.cx-zone-legend strong { font-size: 12px; }
+.cx-zone-legend em { color: var(--muted); font-style: normal; }
+.cx-zone-legend .z-res::before,
+.cx-zone-legend .z-com::before,
+.cx-zone-legend .z-ind::before,
+.cx-zone-legend .z-grn::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+.cx-zone-legend .z-res::before { background: #93c5fd; }
+.cx-zone-legend .z-com::before { background: #fca5a5; }
+.cx-zone-legend .z-ind::before { background: #d8b4fe; }
+.cx-zone-legend .z-grn::before { background: #86efac; }
+
+.addr-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.addr-row input { flex: 1 1 160px; }
+label.tight { display: grid; gap: 4px; margin: 8px 0; }
 .cx-tiles { opacity: 0.85; }
 .cx-parcel { stroke-opacity: 0.6; }
 #context-2d { position: relative; }
