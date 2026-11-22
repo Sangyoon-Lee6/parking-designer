@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=251" />
+    <link rel="stylesheet" href="styles.css?v=260" />
     <script type="importmap">
       {
         "imports": {
@@ -18,29 +18,31 @@
       <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
     <script src="vendor/leaflet/leaflet.js"></script>
   </head>
-  <body class="app">
+  <body class="app" data-wizard="1">
     <header class="topbar">
       <div class="brand-inline">
         <h1>주차장 설계</h1>
         <p class="eyebrow">개략 설계</p>
       </div>
-      <ol class="steps" id="steps">
-        <li data-step="1"><span>1</span>조건</li>
-        <li data-step="2"><span>2</span>평면</li>
-        <li data-step="3"><span>3</span>결과</li>
+      <ol class="wizard-steps" id="wizard-steps">
+        <li data-slide="1" class="on"><span>1</span>주소</li>
+        <li data-slide="2"><span>2</span>용도</li>
+        <li data-slide="3"><span>3</span>크기</li>
+        <li data-slide="4"><span>4</span>도로</li>
+        <li data-slide="5"><span>5</span>램프</li>
+        <li data-slide="6"><span>6</span>코어</li>
+        <li data-slide="7"><span>7</span>결과</li>
       </ol>
     </header>
 
-    <div class="shell">
+    <div class="shell" id="shell">
     <main class="stage">
       <div id="plan-view">
-        <button type="button" id="plan-expand-hit" class="plan-expand-hit">클릭하여 확대 · 램프·코어 조정</button>
         <div class="toolbar">
-          <button id="collapse-plan" type="button" class="ghost tiny">접기</button>
-          <span id="status">주차장 가로, 세로, 기둥 간격을 입력한 뒤 평면을 만드세요.</span>
+          <span id="status">주소를 입력한 뒤 다음으로 진행하세요.</span>
           <span id="readout"></span>
           <div class="toolbar-actions">
-            <button id="play-build" type="button" class="ghost tiny">생성 과정 보기</button>
+            <button id="play-build" type="button" class="ghost tiny">생성 과정</button>
             <button id="show-conflicts" type="button" class="ghost tiny">충돌 칸</button>
             <button id="fit" type="button" class="ghost tiny">맞춤</button>
           </div>
@@ -83,45 +85,56 @@
         <div id="context-map" class="cx-view"></div>
         <div id="context-2d" class="cx-view" hidden></div>
         <div id="context-3d" class="cx-view" hidden></div>
-        <p class="hint">지도: 왼쪽 드래그 = 영역 선택 · 오른쪽 드래그 = 이동 · 주황 = 대지 · 2D 배경 = 브이월드 지도 · 회색 = 건물(진할수록 높음) · 2D: 휠 확대 · 드래그 이동 · 더블클릭 처음 화면 · 건물에 마우스를 올리면 이름·층수·높이 · 3D는 끌어서 회전, 휠로 확대</p>
+        <p class="hint">지도: 왼쪽 드래그 = 영역 선택 · 오른쪽 드래그 = 이동 · 주황 = 대지 · 2D 배경 = 브이월드 지도</p>
       </div>
     </main>
 
     <aside class="panel form-rail">
-      <section class="pane" data-pane="1">
-        <h2>조건 입력</h2>
-        <p class="hint">왼쪽 미리보기로 형태를 확인하고, 램프·코어 조정은 미리보기를 클릭해 확대하세요.</p>
-        <label>
-          프로젝트명
-          <input id="project-name" type="text" value="주차장 개략 설계" />
-        </label>
-        <label>
-          대지 주소 <span class="info" tabindex="0" title="도로명 또는 지번 주소. 브이월드(국토교통부) 자료로 용도지역과 건폐율·용적률 상한을 찾아 줍니다.">ⓘ</span>
-          <span class="addr-row">
-            <input id="site-address" type="text" placeholder="예: 서울 노원구 공릉로 232" />
-            <button type="button" id="zone-lookup" class="ghost tiny">용도지역 조회</button>
-          </span>
-        </label>
-        <div id="zone-result" class="zone-result" hidden></div>
-        <div class="split column-row">
-          <p id="zone-current" class="hint"></p>
-          <button type="button" id="open-zone-detail" class="ghost tiny">상세 입력</button>
-        </div>
-        <div id="zone-detail" class="zone-detail" hidden>
-          <div class="split">
-            <label>
-              용도지역
-              <select id="zone"></select>
-            </label>
-            <label>
-              지역 <span class="info" tabindex="0" title="주차장법 시행령 별표 1의 지역 구분. 공동주택 세대당 주차 기준(전용면적 ÷ 75·85·95·110㎡ 등)이 달라집니다.">ⓘ</span>
-              <select id="region"></select>
-            </label>
+      <div class="wizard" id="wizard">
+
+        <section class="slide on" data-slide="1">
+          <h2>주소 입력</h2>
+          <p class="slide-lead">대지 주소를 넣으면 용도지역을 찾아 줍니다.</p>
+          <label>
+            프로젝트명
+            <input id="project-name" type="text" value="주차장 개략 설계" />
+          </label>
+          <label>
+            대지 주소 <span class="info" tabindex="0" title="도로명 또는 지번 주소. 브이월드(국토교통부) 자료로 용도지역과 건폐율·용적률 상한을 찾아 줍니다.">ⓘ</span>
+            <span class="addr-row">
+              <input id="site-address" type="text" placeholder="예: 서울 노원구 공릉로 232" />
+              <button type="button" id="zone-lookup" class="ghost tiny">용도지역 조회</button>
+            </span>
+          </label>
+          <div id="zone-result" class="zone-result" hidden></div>
+          <div class="split column-row">
+            <p id="zone-current" class="hint"></p>
+            <button type="button" id="open-zone-detail" class="ghost tiny">상세 입력</button>
           </div>
-          <p id="zone-auto" class="hint zone-auto" hidden>주소로 자동 맞춤 <button type="button" id="zone-unlock" class="ghost tiny">직접 수정</button></p>
-        </div>
-        <div id="use-form"></div>
-        <div class="split column-row">
+          <div id="zone-detail" class="zone-detail" hidden>
+            <div class="split">
+              <label>
+                용도지역
+                <select id="zone"></select>
+              </label>
+              <label>
+                지역 <span class="info" tabindex="0" title="주차장법 시행령 별표 1의 지역 구분. 공동주택 세대당 주차 기준(전용면적 ÷ 75·85·95·110㎡ 등)이 달라집니다.">ⓘ</span>
+                <select id="region"></select>
+              </label>
+            </div>
+            <p id="zone-auto" class="hint zone-auto" hidden>주소로 자동 맞춤 <button type="button" id="zone-unlock" class="ghost tiny">직접 수정</button></p>
+          </div>
+          <div class="example-row">
+            <button id="load-reference" type="button" class="ghost tiny">시연 예시 불러오기</button>
+          </div>
+        </section>
+
+
+        <section class="slide" data-slide="2" hidden>
+          <h2>용도 · 형태</h2>
+          <p class="slide-lead">건물 용도와 단일/단지형을 고릅니다.</p>
+          <div id="use-form"></div>
+          <div class="split column-row">
           <p id="demand-summary" class="hint"></p>
           <button type="button" id="open-demand-dialog" class="ghost tiny">산정 고급 설정</button>
         </div>
@@ -145,8 +158,6 @@
           <p class="hint">"크기 추천"에만 쓰는 어림값. 1대당 면적은 주차칸+차로·기둥·램프 몫(보통 30~40㎡).</p>
           <div class="dialog-actions"><button type="button" id="close-demand-dialog">확인</button></div>
         </dialog>
-        <button type="button" id="suggest-size" class="ghost tiny">법정 대수로 크기 추천</button>
-        <p class="hint" id="suggest-note"></p>
         <fieldset class="site-type">
           <legend>건물 형태</legend>
           <div class="choice" id="site-type-choice" role="group" aria-label="건물 형태">
@@ -166,7 +177,15 @@
             <button type="button" id="add-building" class="ghost tiny">동 추가</button>
           </div>
         </fieldset>
-        <p class="section-label">주차장 크기</p>
+        </section>
+
+
+        <section class="slide" data-slide="3" hidden>
+          <h2>크기 · 기둥 · 층고</h2>
+          <p class="slide-lead">주차장 규모와 층고를 정합니다.</p>
+          <button type="button" id="suggest-size" class="ghost tiny">법정 대수로 크기 추천</button>
+        <p class="hint" id="suggest-note"></p>
+          <p class="section-label">주차장 크기</p>
         <div class="choice compact" id="size-presets" role="group" aria-label="크기 프리셋">
           <button type="button" data-w="48" data-d="42">48×42</button>
           <button type="button" data-w="60" data-d="50">60×50</button>
@@ -282,7 +301,16 @@
           <input id="no-ground-access" type="checkbox" checked />
           지상공원형 단지 (지상에 차 없음) → 지하 차로 2.7m <span class="info" tabindex="0" title="차가 지하로만 다니는 단지는 택배차가 지하로 들어가야 해서 차로 2.7m 이상(주택건설기준 규칙 제6조의2). 지상 도로로 동 앞까지 갈 수 있으면 체크 해제(2.3m).">ⓘ</span>
         </label>
-        <div class="field">
+        
+          <dl class="preview" id="plate-preview"></dl>
+          <p id="input-error" class="error" hidden></p>
+        </section>
+
+
+        <section class="slide" data-slide="4" hidden>
+          <h2>도로 접한 변</h2>
+          <p class="slide-lead">차량이 들어오는 도로 방향을 고르세요.</p>
+          <div class="field">
           <span class="field-label">도로 접한 변</span>
           <div class="choice" data-for="road-edge" role="group">
             <button type="button" data-value="s" class="on">남</button>
@@ -297,7 +325,16 @@
             <option value="e">동측 (오른쪽)</option>
           </select>
         </div>
-        <div class="field">
+        
+          <p class="hint">선택하면 미리보기에 도로변이 표시됩니다.</p>
+        </section>
+
+
+        <section class="slide" data-slide="5" hidden>
+          <h2>램프 형태 · 위치</h2>
+          <p class="slide-lead">왼쪽 큰 평면에서 램프를 끌어 옮기세요.</p>
+          <div id="reference-notes" class="hint"></div>
+          <div class="field">
           <span class="field-label">램프 위치 <span class="info" tabindex="0" title="램프는 도로에서 바로 들어오므로 도로 접한 변에 둡니다. 자동은 양 끝·가운데를 모두 짜 보고 대수가 가장 많은 곳을 고릅니다. 도로변 3m는 경사 8.5% 이하로 자동 반영.">ⓘ</span></span>
           <select id="ramp-pos"></select>
         </div>
@@ -373,29 +410,59 @@
             <div class="dialog-actions"><button type="button" id="close-margin-dialog">확인</button></div>
           </dialog>
         </div>
-        <select id="circulation" hidden><option value="ccw" selected>반시계</option></select><!-- 순환 방향은 자동 -->
-        <table id="demand-table" class="demand"></table>
-        <p id="demand-note" class="hint"></p>
-        <p class="hint small">개략 검토용 · 실제 인허가는 지자체 조례와 최신 법령 확인</p>
-        <dl class="preview" id="plate-preview" hidden></dl>
-        <p id="input-error" class="error" hidden></p>
-        <button id="generate" type="button" class="primary">평면 만들기</button>
-        <div class="split column-row example-row">
-          <p class="hint">시연용 예시: 대학 건물 지하 1층 도면(크기·코어·램프를 덮어씀)</p>
-          <button id="load-reference" type="button" class="ghost tiny">예시 불러오기</button>
-        </div>
-      </section>
+        
+        
+          <fieldset>
+          <legend>입구 · 출구 · 램프</legend>
+          <div class="split column-row">
+            <p id="ramp-summary" class="hint"></p>
+            <button type="button" id="open-ramp-dialog" class="ghost tiny">고급 설정</button>
+          </div>
+          <dialog id="ramp-dialog" class="settings-dialog">
+            <h3>램프 · 개구부 직접 설정</h3>
+            <div class="split">
+              <label>
+                램프 폭 (m)
+                <input id="ramp-width" type="number" min="3.5" max="12" step="0.1" value="6" />
+              </label>
+              <label>
+                램프 길이 (m)
+                <input id="ramp-length" type="number" min="6" step="0.1" value="18" readonly tabindex="-1" title="층고로 자동 계산(직선 17%·곡선 14%·완화구간)" />
+              </label>
+            </div>
+            <label>
+              선택 개구부 폭 (m)
+              <input id="entrance-width" type="number" min="3" max="12" step="0.1" value="6" />
+            </label>
+            <p class="hint">램프 길이는 층고로 자동 고정됩니다(직선 17%·곡선 14%, 도로변 3m·완화구간 포함). 평면이 짧으면 곡선으로 꺾어 넣습니다. 폭은 양방향 직선 6m · 곡선 6.5m가 법정 최소입니다.</p>
+            <div class="dialog-actions">
+              <button type="button" id="ramp-auto" class="ghost">자동값으로</button>
+              <button type="button" id="close-ramp-dialog">확인</button>
+            </div>
+          </dialog>
+          <div class="split" id="door-mode-row">
+            <button id="place-split" type="button" class="ghost">분리 출입구</button>
+            <button id="place-overlap" type="button" class="ghost">램프 일체형</button>
+          </div>
+          <button id="remove-selected" type="button" class="ghost">선택 삭제</button>
+          <ul id="opening-list" class="picks"></ul>
+        </fieldset>
 
-      <section class="pane" data-pane="2" hidden>
-        <h2>평면에서 확정</h2>
-        <p class="hint">왼쪽 확대 평면에서 코어·램프·출입구를 끌어 옮기세요. 빈 곳 드래그=이동, 휠=확대.</p>
-        <div id="reference-notes" class="hint"></div>
-        <div class="tools" id="tools">
+        
+          <div class="tools" id="tools">
           <button type="button" data-tool="entrance">입구 추가</button>
           <button type="button" data-tool="exit">출구 추가</button>
         </div>
 
-        <fieldset>
+        
+          <button id="generate" type="button" class="primary" hidden>평면 만들기</button>
+        </section>
+
+
+        <section class="slide" data-slide="6" hidden>
+          <h2>코어 형태 · 위치</h2>
+          <p class="slide-lead">왼쪽 큰 평면에서 코어를 끌어 옮기세요.</p>
+          <fieldset>
           <legend>코어</legend>
           <div class="split">
             <label>
@@ -463,8 +530,11 @@
           </dialog>
         </fieldset>
 
-        <fieldset>
-          <legend>도면 비교</legend>
+        
+          <details class="advanced">
+            <summary>도면 비교 (선택)</summary>
+            <div class="overlay-fields">
+          
           <label>
             첨부 도면
             <input id="overlay-file" type="file" accept="image/*" />
@@ -493,78 +563,63 @@
             <button id="overlay-on" type="button" class="ghost">겹쳐 보기</button>
             <button id="overlay-side" type="button" class="ghost">나란히 보기</button>
           </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>입구 · 출구 · 램프</legend>
-          <div class="split column-row">
-            <p id="ramp-summary" class="hint"></p>
-            <button type="button" id="open-ramp-dialog" class="ghost tiny">고급 설정</button>
-          </div>
-          <dialog id="ramp-dialog" class="settings-dialog">
-            <h3>램프 · 개구부 직접 설정</h3>
-            <div class="split">
-              <label>
-                램프 폭 (m)
-                <input id="ramp-width" type="number" min="3.5" max="12" step="0.1" value="6" />
-              </label>
-              <label>
-                램프 길이 (m)
-                <input id="ramp-length" type="number" min="6" step="0.1" value="18" readonly tabindex="-1" title="층고로 자동 계산(직선 17%·곡선 14%·완화구간)" />
-              </label>
-            </div>
-            <label>
-              선택 개구부 폭 (m)
-              <input id="entrance-width" type="number" min="3" max="12" step="0.1" value="6" />
-            </label>
-            <p class="hint">램프 길이는 층고로 자동 고정됩니다(직선 17%·곡선 14%, 도로변 3m·완화구간 포함). 평면이 짧으면 곡선으로 꺾어 넣습니다. 폭은 양방향 직선 6m · 곡선 6.5m가 법정 최소입니다.</p>
-            <div class="dialog-actions">
-              <button type="button" id="ramp-auto" class="ghost">자동값으로</button>
-              <button type="button" id="close-ramp-dialog">확인</button>
-            </div>
-          </dialog>
-          <div class="split" id="door-mode-row">
-            <button id="place-split" type="button" class="ghost">분리 출입구</button>
-            <button id="place-overlap" type="button" class="ghost">램프 일체형</button>
-          </div>
-          <button id="remove-selected" type="button" class="ghost">선택 삭제</button>
-          <ul id="opening-list" class="picks"></ul>
-        </fieldset>
-
-        <dl class="preview" id="plan-stats"></dl>
-        <div id="floor-stack" class="floors"></div>
-        <div id="step2-error" class="error issue-box" hidden></div>
-        <div id="step2-warn" class="warn issue-box" hidden></div>
-        <button id="to-3d" type="button" class="primary">결과 보기</button>
-      </section>
-
-      <section class="pane" data-pane="3" hidden>
-        <h2>결과</h2>
-        <div class="split">
-          <button id="tab-model" type="button">3D 모델</button>
-          <button id="tab-sheet" type="button">평면도</button>
         </div>
-        <dl class="preview" id="scene-stats"></dl>
-        <div id="floor-picker" class="floors"></div>
-        <div id="sheet-tools" class="split" hidden>
-          <button id="sheet-png" type="button" class="ghost">PNG</button>
-          <button id="sheet-svg" type="button" class="ghost">SVG</button>
-          <button id="sheet-print" type="button" class="ghost">A3 인쇄</button>
-        </div>
-        <button id="back-plan" type="button">평면으로 돌아가기</button>
-        <button id="reset-camera" type="button" class="ghost">카메라 초기화</button>
-      </section>
 
-      <p class="note">
-        주차칸 일반 2.5×5.0m · 확장형 2.6×5.2m(50대 이상 30%, 이때 줄 깊이 5.2m), 직각 차로 6m, 직선 램프 17% 이하, 차로 높이 2.3m 이상.
-        법정 대수는 주택건설기준 제27조와 주차장법 시행령 별표 1의 개략값입니다.
-        <br /><span class="hint">버전 2026-11-21 · r251</span>
-      </p>
+        
+          </details>
+          <dl class="preview" id="plan-stats"></dl>
+          <div id="floor-stack" class="floors"></div>
+          <div id="step2-error" class="error issue-box" hidden></div>
+          <div id="step2-warn" class="warn issue-box" hidden></div>
+        </section>
+
+
+        <section class="slide" data-slide="7" hidden>
+          <h2>결과 · 추천 후보</h2>
+          <p class="slide-lead">여러 배치안을 비교해 최적 3안을 골랐습니다.</p>
+          <div id="priority-legend" class="priority-legend"></div>
+          <div id="recommend-list" class="recommend-list"></div>
+          <dl class="preview" id="scene-stats"></dl>
+          <div class="split result-tabs">
+            <button id="tab-model" type="button">3D 모델</button>
+            <button id="tab-sheet" type="button">평면도</button>
+            <button id="tab-plan" type="button" class="on">평면 편집</button>
+          </div>
+          <div id="floor-picker" class="floors"></div>
+          <div id="sheet-tools" class="split" hidden>
+            <button id="sheet-png" type="button" class="ghost">PNG</button>
+            <button id="sheet-svg" type="button" class="ghost">SVG</button>
+            <button id="sheet-print" type="button" class="ghost">A3 인쇄</button>
+          </div>
+          <button id="to-3d" type="button" class="primary" hidden>결과 보기</button>
+          <button id="back-plan" type="button" class="ghost">코어 단계로</button>
+          <button id="reset-camera" type="button" class="ghost">카메라 초기화</button>
+          <table id="demand-table" class="demand"></table>
+          <p id="demand-note" class="hint"></p>
+          <p class="hint small">개략 검토용 · 실제 인허가는 지자체 조례와 최신 법령 확인</p>
+        </section>
+
+      </div>
+      <nav class="wizard-nav">
+        <button type="button" id="wizard-back" class="ghost" disabled>이전</button>
+        <button type="button" id="wizard-next" class="primary">다음</button>
+      </nav>
+      <select id="circulation" hidden><option value="ccw" selected>반시계</option></select>
+      <p class="note"><span class="hint">버전 2026-11-22 · r260</span></p>
     </aside>
     </div>
 
-    <script type="module" src="src/main.js?v=251"></script>
-      <div id="busy" class="busy" hidden role="status" aria-live="polite">
+    <!-- keep old steps for any leftover queries (hidden) -->
+    <ol class="steps" id="steps" hidden>
+      <li data-step="1"><span>1</span>조건</li>
+      <li data-step="2"><span>2</span>평면</li>
+      <li data-step="3"><span>3</span>결과</li>
+    </ol>
+    <button id="plan-expand-hit" type="button" hidden>expand</button>
+    <button id="collapse-plan" type="button" hidden>접기</button>
+
+    <script type="module" src="src/main.js?v=260"></script>
+    <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>
   </body>

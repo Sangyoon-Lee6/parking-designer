@@ -1,15 +1,26 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=251";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=251";
-import { drawThumb, mountPlan } from "./plan.js?v=251";
-import { stallRuleTargets } from "./stallTypes.js?v=251";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=251";
-import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=251";
-import { bindContextDialog, closeContext, openContext } from "./context.js?v=251";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=251";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=260";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=260";
+import { drawThumb, mountPlan } from "./plan.js?v=260";
+import { stallRuleTargets } from "./stallTypes.js?v=260";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=260";
+import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=260";
+import { bindContextDialog, closeContext, openContext } from "./context.js?v=260";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=260";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
-let planExpanded = false;
+let wizardSlide = 1;
+let wizardAnimating = false;
+const WIZARD_MAX = 7;
+const WIZARD_LABELS = {
+  1: "주소를 입력한 뒤 다음으로 진행하세요.",
+  2: "용도와 건물 형태를 고른 뒤 다음으로 진행하세요.",
+  3: "주차장 크기·기둥 간격·층고를 정하세요.",
+  4: "도로가 접한 변을 고르세요.",
+  5: "램프를 배치하고 왼쪽 평면에서 위치를 조정하세요.",
+  6: "코어를 배치하고 왼쪽 평면에서 위치를 조정하세요.",
+  7: "추천 후보 3안을 비교해 고르세요.",
+};
 
 const fields = {
   width: $("park-width"),
@@ -202,43 +213,112 @@ function busy(label, work) {
 }
 
 $("load-reference").addEventListener("click", () => {
-  if (!inputsValid()) return;
-  busy("기준 사례 불러오는 중…", loadReference);
+  busy("기준 사례 불러오는 중…", () => {
+    loadReference();
+    setWizard(5, { silent: true });
+  });
 });
 
 $("generate").addEventListener("click", () => {
   if (!inputsValid()) return;
-  planExpanded = true;
-  busy("평면 만드는 중… (배치안 여러 개를 비교해요)", generatePlate);
+  busy("평면 만드는 중… (배치안 여러 개를 비교해요)", () => {
+    generatePlate();
+    setWizard(5, { silent: true });
+  });
 });
 
-function expandPlanPreview() {
-  if (planExpanded || state.step !== 1) return;
-  planExpanded = true;
-  render();
-  requestAnimationFrame(() => {
-    const fit = $("fit");
-    if (fit) fit.click();
-  });
+function wizardStepFromSlide(slide) {
+  if (slide <= 4) return 1;
+  if (slide <= 6) return 2;
+  if (state.resultTab === "model" || state.resultTab === "sheet") return 3;
+  return 2;
 }
 
-$("plan-expand-hit").addEventListener("click", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  expandPlanPreview();
+function canLeaveWizard(slide) {
+  if (slide === 3 && !inputsValid()) {
+    $("input-error").hidden = false;
+    return false;
+  }
+  return true;
+}
+
+function setWizard(next, { silent = false } = {}) {
+  next = Math.max(1, Math.min(WIZARD_MAX, Number(next) || 1));
+  if (wizardAnimating) return;
+  if (next === wizardSlide && !silent) {
+    render();
+    return;
+  }
+  if (next > wizardSlide && !canLeaveWizard(wizardSlide)) return;
+
+  const enter = () => {
+    const prev = wizardSlide;
+    const curEl = document.querySelector(`.slide[data-slide="${prev}"]`);
+    const nextEl = document.querySelector(`.slide[data-slide="${next}"]`);
+    if (!nextEl) return;
+    if (next === 7 && state.resultTab !== "sheet" && state.resultTab !== "model") {
+      state.resultTab = "plan";
+    }
+    if (next === 7 && state.resultTab === "model" && !sceneMount) {
+      state.resultTab = "plan";
+    }
+    wizardAnimating = true;
+    nextEl.hidden = false;
+    if (curEl && prev !== next) {
+      curEl.classList.add("leaving");
+      curEl.classList.remove("on");
+    }
+    requestAnimationFrame(() => {
+      nextEl.classList.add("on");
+    });
+    window.setTimeout(() => {
+      if (curEl && prev !== next) {
+        curEl.classList.remove("leaving", "on");
+        curEl.hidden = true;
+      }
+      wizardSlide = next;
+      state.step = wizardStepFromSlide(next);
+      wizardAnimating = false;
+      document.body.dataset.wizard = String(next);
+      render();
+      if (next >= 5) {
+        requestAnimationFrame(() => { const fit = $("fit"); if (fit) fit.click(); });
+      }
+    }, 360);
+  };
+
+  if (next >= 5 && !state.plate) {
+    if (!inputsValid()) {
+      setWizard(3, { silent: true });
+      return;
+    }
+    busy("평면 만드는 중… (배치안 여러 개를 비교해요)", () => {
+      generatePlate();
+      enter();
+    });
+    return;
+  }
+  enter();
+}
+
+$("wizard-next").addEventListener("click", () => {
+  if (wizardSlide >= WIZARD_MAX) {
+    if (readyFor3d()) open3d();
+    return;
+  }
+  setWizard(wizardSlide + 1);
 });
-$("plan-view").addEventListener("click", (event) => {
-  if (planExpanded || state.step !== 1) return;
-  if (event.target.closest(".toolbar, .toolbar-actions, #collapse-plan, #compare-dock, button")) return;
-  expandPlanPreview();
+$("wizard-back").addEventListener("click", () => setWizard(wizardSlide - 1));
+document.querySelectorAll("#wizard-steps li").forEach((item) => {
+  item.addEventListener("click", () => {
+    const slide = Number(item.dataset.slide);
+    if (slide < wizardSlide || (slide <= wizardSlide + 1) || (slide <= 4) || state.plate) {
+      setWizard(slide);
+    }
+  });
 });
-$("collapse-plan").addEventListener("click", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  planExpanded = false;
-  if (state.step === 2) setStep(1);
-  else render();
-});
+if ($("plan-expand-hit")) $("plan-expand-hit").addEventListener("click", () => setWizard(Math.max(5, wizardSlide)));
+if ($("collapse-plan")) $("collapse-plan").addEventListener("click", () => setWizard(Math.min(4, wizardSlide)));
 
 document.querySelectorAll(".choice[data-for]").forEach((group) => {
   const select = $(group.dataset.for);
@@ -381,9 +461,10 @@ $("overlay-side").addEventListener("click", () => {
 });
 $("remove-selected").addEventListener("click", removeSelection);
 $("to-3d").addEventListener("click", open3d);
-$("back-plan").addEventListener("click", () => setStep(2));
-$("tab-model").addEventListener("click", () => { state.resultTab = "model"; emit(); });
-$("tab-sheet").addEventListener("click", () => { state.resultTab = "sheet"; emit(); });
+$("back-plan").addEventListener("click", () => { state.resultTab = "plan"; setWizard(6); });
+$("tab-model").addEventListener("click", () => { state.resultTab = "model"; if (wizardSlide !== 7) setWizard(7); else { open3d(); } });
+$("tab-sheet").addEventListener("click", () => { state.resultTab = "sheet"; state.step = 3; if (wizardSlide !== 7) setWizard(7); else emit(); });
+if ($("tab-plan")) $("tab-plan").addEventListener("click", () => { state.resultTab = "plan"; state.step = 2; emit(); });
 $("sheet-png").addEventListener("click", () => {
   const canvas = $("sheet");
   canvas.toBlob((blob) => downloadBlob("parking-plan.png", blob));
@@ -420,7 +501,7 @@ document.querySelectorAll("#steps li").forEach((item) => {
 mountPlan($("plan"));
 subscribe(render);
 // 주변 매스는 조건 단계에서만 오른쪽에 띄운다. 평면·결과로 넘어가면 닫는다.
-subscribe(() => { if (state.step !== 1 && !$("context-view").hidden) closeContext(); });
+subscribe(() => { if (wizardSlide > 4 && !$("context-view").hidden) closeContext(); });
 render();
 
 let sceneMount = null;
@@ -444,7 +525,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=251")
+    sceneMount = import("./scene.js?v=260")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -458,7 +539,18 @@ async function open3d() {
   if (!readyFor3d()) return;
   try {
     await ensureScene();
-    setStep(3);
+    state.resultTab = "model";
+    state.step = 3;
+    if (wizardSlide !== 7) {
+      wizardSlide = 7;
+      document.body.dataset.wizard = "7";
+      document.querySelectorAll(".slide").forEach((slide) => {
+        const on = Number(slide.dataset.slide) === 7;
+        slide.hidden = !on;
+        slide.classList.toggle("on", on);
+      });
+    }
+    emit();
   } catch (error) {
     $("step2-error").hidden = false;
     $("step2-error").textContent = "3D 라이브러리를 불러오지 못했습니다. 네트워크 연결을 확인해 주세요.";
@@ -499,26 +591,107 @@ function syncChoiceButtons() {
   if (siteGroup) syncChoiceGroup(siteGroup, state.siteType);
 }
 
-function render() {
-  const step = state.step;
-  if (step === 2) planExpanded = true;
-  if (step === 3) planExpanded = false;
-  document.body.classList.toggle("plan-expanded", planExpanded && step !== 3);
-  document.body.classList.toggle("step-result", step === 3);
-  document.querySelectorAll(".pane").forEach((pane) => {
-    pane.hidden = Number(pane.dataset.pane) !== step;
+function rankTopRecommendations(variants, limit = 3) {
+  const priorities = [
+    "동선 연결·충돌 없음 (배치 유효성)",
+    "주차대수 최대",
+    "1대당 면적 효율 (작을수록 유리)",
+    "차로 비율·배치 균형",
+  ];
+  const scored = variants.map((variant, index) => {
+    const m = variant.metrics || {};
+    const reasons = [];
+    let total = 0;
+    if (m.valid) {
+      total += 100000;
+      reasons.push("동선·법규 통과");
+    } else {
+      reasons.push(`탈락 요인 있음${m.rejected ? ` (${m.rejected})` : ""}`);
+    }
+    total += (m.stalls || 0) * 120;
+    reasons.push(`주차 ${m.stalls || 0}대`);
+    const aps = Number(m.areaPerStall) || 99;
+    total += Math.max(0, 80 - aps);
+    reasons.push(`1대당 ${aps.toFixed?.(1) || aps}㎡`);
+    const aisle = Number(m.aisleRatio) || 0;
+    total += Math.max(0, 40 - aisle * 40);
+    if (m.connected) total += 25;
+    if (variant.recommended) {
+      total += 15;
+      reasons.push("엔진 추천안");
+    }
+    if (variant.maxStalls) reasons.push("최대 주차칸");
+    return { index, variant, total, reasons, priorities };
   });
+  scored.sort((a, b) => b.total - a.total || a.index - b.index);
+  return { priorities, picks: scored.slice(0, limit) };
+}
+
+function renderRecommendations() {
+  const list = $("recommend-list");
+  const legend = $("priority-legend");
+  if (!list || !legend) return;
+  if (wizardSlide !== 7 || !state.variants.length) {
+    list.innerHTML = "";
+    legend.innerHTML = "";
+    return;
+  }
+  const { priorities, picks } = rankTopRecommendations(state.variants, 3);
+  legend.innerHTML = `<strong>선정 우선순위</strong><ol>${priorities.map((p) => `<li>${p}</li>`).join("")}</ol>`;
+  list.innerHTML = "";
+  picks.forEach((pick, rank) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `recommend-card${pick.index === state.variantIndex ? " on" : ""}`;
+    const canvas = document.createElement("canvas");
+    const m = pick.variant.metrics;
+    const title = pick.variant.recommended ? `${pick.variant.id} · 엔진 추천` : pick.variant.id;
+    button.innerHTML = `<div></div><div><h3><span class="rank">${rank + 1}</span>${title}</h3><p>${pick.variant.name}<br>${m.stalls}대 · ${m.areaPerStall.toFixed(1)}㎡/대 · ${m.connected ? "연결" : "끊김"} · 충돌 ${m.columnHits}</p><p class="why">${pick.reasons.slice(0, 3).join(" · ")}</p></div>`;
+    button.children[0].replaceWith(canvas);
+    button.addEventListener("click", () => {
+      applyVariant(pick.index);
+      state.resultTab = "plan";
+      state.step = 2;
+      emit();
+    });
+    list.appendChild(button);
+    drawThumb(canvas, pick.variant);
+  });
+}
+
+function render() {
+  const step = wizardStepFromSlide(wizardSlide);
+  state.step = step;
+  document.body.dataset.wizard = String(wizardSlide);
+  document.body.classList.toggle("plan-expanded", wizardSlide >= 5);
+  document.body.classList.toggle("step-result", step === 3);
+  document.querySelectorAll("#wizard-steps li").forEach((item) => {
+    const value = Number(item.dataset.slide);
+    item.classList.toggle("on", value === wizardSlide);
+    item.classList.toggle("done", value < wizardSlide);
+  });
+  const back = $("wizard-back");
+  const next = $("wizard-next");
+  if (back) back.disabled = wizardSlide <= 1 || wizardAnimating;
+  if (next) {
+    next.textContent = wizardSlide >= WIZARD_MAX ? (readyFor3d() ? "3D 보기" : "완료") : "다음";
+    next.disabled = wizardAnimating;
+  }
   document.querySelectorAll("#steps li").forEach((item) => {
     const value = Number(item.dataset.step);
     item.classList.toggle("on", value === step);
     item.classList.toggle("done", value < step);
   });
   const showSheet = step === 3 && state.resultTab === "sheet";
-  $("plan-view").hidden = step === 3;
-  $("scene-view").hidden = step !== 3 || showSheet;
+  const showModel = step === 3 && state.resultTab === "model";
+  $("plan-view").hidden = showSheet || showModel;
+  $("scene-view").hidden = !showModel;
   $("sheet-view").hidden = !showSheet;
   $("sheet-tools").hidden = !showSheet;
-  $("reset-camera").hidden = showSheet;
+  $("reset-camera").hidden = showSheet || !showModel;
+  if ($("tab-plan")) $("tab-plan").classList.toggle("on", !showSheet && !showModel);
+  if ($("tab-model")) $("tab-model").classList.toggle("on", showModel);
+  if ($("tab-sheet")) $("tab-sheet").classList.toggle("on", showSheet);
 
   const valid = inputsValid();
   $("generate").disabled = !valid;
@@ -691,7 +864,7 @@ function render() {
   });
 
   $("reference-notes").textContent = state.referenceNotes.join(" ");
-  $("compare-dock").hidden = step !== 2 || !state.variants.length;
+  $("compare-dock").hidden = wizardSlide < 5 || wizardSlide > 6 || !state.variants.length;
   renderCompare();
   renderCorePick();
 
@@ -707,7 +880,7 @@ function render() {
   const boxes = [];
   if (errors.length) boxes.push(`<div class="issue-box error"><strong>3D 불가 — 원인</strong>${listHtml(errors)}</div>`);
   if (warnings.length) boxes.push(`<div class="issue-box warn"><strong>주의</strong>${listHtml(warnings)}</div>`);
-  alert.hidden = step !== 2 || !state.variants.length || boxes.length === 0;
+  alert.hidden = wizardSlide < 5 || wizardSlide > 6 || !state.variants.length || boxes.length === 0;
   alert.innerHTML = boxes.join("");
   const ready = readyFor3d();
   $("to-3d").disabled = !ready;
@@ -715,14 +888,18 @@ function render() {
   $("show-conflicts").classList.toggle("on", state.debugColumns);
 
   const stageText = ["", "외곽 주차칸", "순환 차로", "내부 베이", "기둥", "코어 우회", "동선 화살표"];
-  const status = {
-    1: "주차장 크기와 기둥 간격을 입력하거나, 아래 예시를 불러오세요.",
-    2: state.revealStage < 6 ? `생성 과정: ${stageText[state.revealStage]}` : toolStatus(),
-    3: info.floors
-      ? `법정 ${info.required}대, 층당 ${info.placed}대라 지하 ${info.floors}층입니다.`
-      : "한 층에 주차칸이 없어 지하층수를 계산하지 못했습니다.",
-  };
-  $("status").textContent = status[step];
+  let statusText = WIZARD_LABELS[wizardSlide] || "";
+  if (wizardSlide >= 5 && wizardSlide <= 6 && state.revealStage < 6) {
+    statusText = `생성 과정: ${stageText[state.revealStage]}`;
+  } else if (wizardSlide >= 5 && wizardSlide <= 6 && state.plate) {
+    statusText = toolStatus();
+  } else if (wizardSlide === 7) {
+    statusText = info.floors
+      ? `법정 ${info.required}대 · 층당 ${info.placed}대 → 지하 ${info.floors}층 규모`
+      : WIZARD_LABELS[7];
+  }
+  $("status").textContent = statusText;
+  renderRecommendations();
 }
 
 function renderCorePick() {

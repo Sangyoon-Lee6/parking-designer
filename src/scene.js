@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=251";
-import { state, subscribe, summary } from "./state.js?v=251";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=260";
+import { state, subscribe, summary } from "./state.js?v=260";
 
 const DRAW_CAP = 12;
 let renderer;

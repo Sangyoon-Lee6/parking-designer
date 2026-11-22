@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=251";
+import { calculateDemand, emptyDemand } from "./demand.js?v=260";
 import {
   basementCount,
   clampCore,
@@ -15,14 +15,14 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=251";
+} from "./layout.js?v=260";
 
 export const state = {
   step: 1,
   households: 100,
   demand: emptyDemand(),
   floorView: "all",
-  resultTab: "model",
+  resultTab: "plan",
   siteType: "single",
   buildings: [],
   parkWidth: 48,
@@ -384,6 +384,7 @@ export function generatePlate() {
   state.revealStage = 6;
   state.tool = "core";
   applyVariant(best);
+  // 마법사 슬라이드는 main.js가 유지한다(생성 후 램프 단계에 머묾).
 }
 
 export function loadReference() {
