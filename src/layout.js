@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=260";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=261";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,7 +6,7 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=260";
+} from "./rampForms.js?v=261";
 
 export {
   lowerFloorRamp,
@@ -14,7 +14,7 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=260";
+} from "./rampForms.js?v=261";
 
 /**
  * 주차장법 시행규칙 제3조·제6조. 확인 2026-11-08. law.go.kr
@@ -211,14 +211,25 @@ export function defaultCores(plate, n, cells) {
     const one = defaultCore(plate);
     return [{ ...one, kind: one.kind || "building" }];
   }
-  const minGap = AISLE + 2 * STALL_D;
+  // 동 외곽(blockUnder)을 쓸 때는 코어 간격이 아니라 타워 footprint 기준으로 띄운다.
+  // 그렇지 않으면 큰 타워가 서로 겹쳐 주차·차로가 조각난다.
   const inset = edgeGap(plate) + STALL_D + AISLE;
   let rec = cells || recommendCoreCells(plate);
+  const expectW = Number(plate.expectTowerW) || 0;
+  const expectD = Number(plate.expectTowerD) || 0;
+  const minGap = Math.max(
+    AISLE + 2 * STALL_D,
+    expectW > 0 ? Math.max(0, expectW - rec.w) + AISLE : 0,
+  );
+  const rowGap = Math.max(
+    AISLE + 2 * STALL_D,
+    expectD > 0 ? Math.max(0, expectD - rec.d) + AISLE : 0,
+  );
   // 좁은 평면에 큰 코어를 억지로 넣으면 clamp가 크기를 잘라 격자·간격이 깨진다 → 칸 수를 줄인다.
   for (let shrink = 0; shrink < 4; shrink += 1) {
     const needW = count * rec.w + (count - 1) * minGap + inset * 2;
     const needD1 = rec.d + inset * 2;
-    const needD2 = 2 * rec.d + minGap + inset * 2;
+    const needD2 = 2 * rec.d + rowGap + inset * 2;
     const fits1 = needW <= plate.width + 0.05 && needD1 <= plate.depth + 0.05;
     const fits2 = (Math.ceil(count / 2) * rec.w + (Math.ceil(count / 2) - 1) * minGap + inset * 2) <= plate.width + 0.05
       && needD2 <= plate.depth + 0.05;
@@ -240,7 +251,7 @@ export function defaultCores(plate, n, cells) {
   const cols1 = Math.max(1, Math.floor((innerW - rec.w) / pitch) + 1);
   const rows = count <= cols1 ? 1 : 2;
   const perRow = Math.ceil(count / rows);
-  const rowPitch = rows > 1 ? Math.max(rec.d + minGap, (innerD - rec.d) / Math.max(1, rows - 1)) : 0;
+  const rowPitch = rows > 1 ? Math.max(rec.d + rowGap, (innerD - rec.d) / Math.max(1, rows - 1)) : 0;
   const cores = [];
   for (let i = 0; i < count; i += 1) {
     const row = Math.floor(i / perRow);
@@ -318,14 +329,62 @@ export function towerTransferNotes(buildings, cores, columns) {
   return notes;
 }
 
-/** 기본 동 외곽: 코어가 가운데 오도록 dx/dy. */
-export function defaultTower(coreW, coreD, towerW = 30, towerD = 14) {
+/** 기본 동 외곽: 코어가 가운데 오도록 dx/dy. (너무 크면 동끼리 겹쳐 주차·차로가 조각난다) */
+export function defaultTower(coreW, coreD, towerW = 22, towerD = 14) {
   return {
     w: towerW,
     d: towerD,
     dx: -(towerW - coreW) / 2,
     dy: -(towerD - coreD) / 2,
   };
+}
+
+/** 동 외곽(blockUnder)끼리 겹치거나 차로 폭 미만으로 붙으면 코어를 밀어 간격을 확보한다. */
+export function spaceCoresForTowers(cores, buildings, plate, gap = AISLE) {
+  const list = (cores || []).map((c) => ({ ...c }));
+  const buildingCores = () => list.filter((c) => (c.kind || "building") !== "stair");
+  for (let pass = 0; pass < 8; pass += 1) {
+    let moved = false;
+    const bcores = buildingCores();
+    for (let i = 0; i < bcores.length; i += 1) {
+      for (let j = i + 1; j < bcores.length; j += 1) {
+        const a = bcores[i];
+        const b = bcores[j];
+        const ba = (buildings || []).find((x) => x.id === a.buildingId);
+        const bb = (buildings || []).find((x) => x.id === b.buildingId);
+        if (!ba?.tower || !bb?.tower) continue;
+        if (ba.blockUnder === false || bb.blockUnder === false) continue;
+        const ta = { x: a.x + (ba.tower.dx || 0), y: a.y + (ba.tower.dy || 0), w: ba.tower.w, d: ba.tower.d };
+        const tb = { x: b.x + (bb.tower.dx || 0), y: b.y + (bb.tower.dy || 0), w: bb.tower.w, d: bb.tower.d };
+        const overlapX = Math.min(ta.x + ta.w, tb.x + tb.w) - Math.max(ta.x, tb.x);
+        const overlapY = Math.min(ta.y + ta.d, tb.y + tb.d) - Math.max(ta.y, tb.y);
+        const sepX = -overlapX;
+        const sepY = -overlapY;
+        // 겹침이거나 간격 < gap
+        const needPush = (overlapX > 0 && overlapY > 0) || (overlapX > -gap && overlapY > 0) || (overlapY > -gap && overlapX > 0);
+        if (!needPush) continue;
+        const pushX = overlapX > 0 ? (overlapX + gap) / 2 : (gap + overlapX) / 2;
+        const pushY = overlapY > 0 ? (overlapY + gap) / 2 : (gap + overlapY) / 2;
+        // 더 적게 움직이는 축으로 민다.
+        if (Math.abs(pushX) <= Math.abs(pushY) || sepY >= gap) {
+          const dir = (ta.x + ta.w / 2) <= (tb.x + tb.w / 2) ? -1 : 1;
+          a.x += dir * pushX;
+          b.x -= dir * pushX;
+        } else {
+          const dir = (ta.y + ta.d / 2) <= (tb.y + tb.d / 2) ? -1 : 1;
+          a.y += dir * pushY;
+          b.y -= dir * pushY;
+        }
+        moved = true;
+      }
+    }
+    for (let i = 0; i < list.length; i += 1) {
+      if ((list[i].kind || "building") === "stair") continue;
+      list[i] = clampCore(list[i], plate);
+    }
+    if (!moved) break;
+  }
+  return list;
 }
 
 function freeCore(plate) {

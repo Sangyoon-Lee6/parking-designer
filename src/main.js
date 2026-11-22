@@ -1,11 +1,11 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=260";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=260";
-import { drawThumb, mountPlan } from "./plan.js?v=260";
-import { stallRuleTargets } from "./stallTypes.js?v=260";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=260";
-import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=260";
-import { bindContextDialog, closeContext, openContext } from "./context.js?v=260";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=260";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=261";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=261";
+import { drawThumb, mountPlan } from "./plan.js?v=261";
+import { stallRuleTargets } from "./stallTypes.js?v=261";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=261";
+import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=261";
+import { bindContextDialog, closeContext, openContext } from "./context.js?v=261";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=261";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -525,7 +525,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=260")
+    sceneMount = import("./scene.js?v=261")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -611,11 +611,14 @@ function rankTopRecommendations(variants, limit = 3) {
     total += (m.stalls || 0) * 120;
     reasons.push(`주차 ${m.stalls || 0}대`);
     const aps = Number(m.areaPerStall) || 99;
-    total += Math.max(0, 80 - aps);
-    reasons.push(`1대당 ${aps.toFixed?.(1) || aps}㎡`);
+    // 1대당 면적이 크면(비효율·조각 배치) 강하게 감점
+    total += Math.max(-8000, (48 - aps) * 80);
+    reasons.push(`1대당 ${Number(aps).toFixed(1)}㎡`);
+    if (aps > 60) reasons.push("면적 효율 낮음");
     const aisle = Number(m.aisleRatio) || 0;
     total += Math.max(0, 40 - aisle * 40);
     if (m.connected) total += 25;
+    if ((m.deadEnds || 0) > 3) total -= (m.deadEnds - 3) * 40;
     if (variant.recommended) {
       total += 15;
       reasons.push("엔진 추천안");

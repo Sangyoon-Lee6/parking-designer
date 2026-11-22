@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=260";
+import { calculateDemand, emptyDemand } from "./demand.js?v=261";
 import {
   basementCount,
   clampCore,
@@ -12,10 +12,11 @@ import {
   intervalsOverlap,
   layoutParking,
   referenceCase,
+  spaceCoresForTowers,
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=260";
+} from "./layout.js?v=261";
 
 export const state = {
   step: 1,
@@ -341,34 +342,55 @@ export function generatePlate() {
   state.plate = plateFromState();
   let resizedComplex = false;
   if (state.siteType === "complex") {
-    // 좁은 기본 평면(48×42)에 동 3개를 억지로 넣으면 코어·차로가 무너진다 → 동 수에 맞게 키운다.
+    // 동 외곽(blockUnder)까지 넣으면 80×58로는 타워가 겹쳐 배치가 망가진다 → 동 수·타워에 맞게 키운다.
     const n = Math.max(1, state.buildings.length || state.cores.filter((c) => (c.kind || "building") !== "stair").length || 3);
-    const minW = n >= 3 ? 80 : n >= 2 ? 60 : 48;
-    const minD = n >= 3 ? 58 : n >= 2 ? 50 : 42;
+    const tw = Math.max(DEFAULT_TOWER_W, ...state.buildings.map((b) => Number(b.tower?.w) || DEFAULT_TOWER_W));
+    const td = Math.max(DEFAULT_TOWER_D, ...state.buildings.map((b) => Number(b.tower?.d) || DEFAULT_TOWER_D));
+    const minW = n >= 3 ? Math.max(98, Math.ceil(tw * 2 + 40)) : n >= 2 ? Math.max(70, Math.ceil(tw + 40)) : 48;
+    const minD = n >= 3 ? Math.max(66, Math.ceil(td * 2 + 28)) : n >= 2 ? Math.max(54, Math.ceil(td + 36)) : 42;
     if (state.parkWidth < minW || state.parkDepth < minD) {
       state.parkWidth = Math.max(state.parkWidth, minW);
       state.parkDepth = Math.max(state.parkDepth, minD);
       state.plate = plateFromState();
       resizedComplex = true;
-      notes.push(`단지형 동 ${n}개에 맞춰 평면을 ${state.parkWidth}×${state.parkDepth}m로 키웠습니다.`);
+      notes.push(`단지형 동 ${n}개·동 외곽에 맞춰 평면을 ${state.parkWidth}×${state.parkDepth}m로 키웠습니다.`);
     }
   }
+  const complexPlate = () => ({
+    ...state.plate,
+    expectTowerW: Math.max(DEFAULT_TOWER_W, ...state.buildings.map((b) => Number(b.tower?.w) || 0)),
+    expectTowerD: Math.max(DEFAULT_TOWER_D, ...state.buildings.map((b) => Number(b.tower?.d) || 0)),
+  });
   if (!state.cores.length) {
     if (state.siteType === "complex" && state.buildings.length) {
-      linkBuildingsToCores(defaultCores(state.plate, state.buildings.length));
+      linkBuildingsToCores(defaultCores(complexPlate(), state.buildings.length));
     } else {
       state.cores = [defaultCore(state.plate)];
     }
   } else if (state.siteType === "complex" && state.buildings.length) {
-    // 계단 코어는 유지, 동 코어가 없으면 동 수만큼 채움. 평면이 커졌으면 동 코어를 다시 고르게 둔다.
+    // 평면 만들기 때 동 코어를 타워 footprint 간격으로 다시 고르게 둔다(계단 코어는 유지).
     const stairs = state.cores.filter((c) => c.kind === "stair").map((c) => clampCore(c, state.plate));
-    const buildingCores = state.cores.filter((c) => (c.kind || "building") !== "stair");
-    if (!buildingCores.length || resizedComplex) {
-      linkBuildingsToCores(defaultCores(state.plate, state.buildings.length));
-      state.cores = state.cores.concat(stairs);
-    }
+    linkBuildingsToCores(defaultCores(complexPlate(), state.buildings.length));
+    state.cores = state.cores.concat(stairs);
   }
   state.cores = state.cores.map((core) => clampCore(core, state.plate));
+  if (state.siteType === "complex" && state.buildings.length) {
+    // 기존 코어가 타워끼리 겹치면 밀어 간격을 확보한 뒤 다시 clamp.
+    const stairs = state.cores.filter((c) => c.kind === "stair");
+    const spaced = spaceCoresForTowers(state.cores, state.buildings, state.plate);
+    state.cores = spaced.filter((c) => (c.kind || "building") !== "stair").concat(stairs);
+    // 타워 dx/dy를 현재 코어 크기에 맞게 재정렬(옛 30m 타워 잔존 방지).
+    state.buildings.forEach((b) => {
+      const core = state.cores.find((c) => c.buildingId === b.id && (c.kind || "building") !== "stair");
+      if (!core || !b.tower) return;
+      if (b.tower.w >= 28) {
+        b.tower = defaultTower(core.w, core.d, DEFAULT_TOWER_W, DEFAULT_TOWER_D);
+      } else {
+        b.tower.dx = -(b.tower.w - core.w) / 2;
+        b.tower.dy = -(b.tower.d - core.d) / 2;
+      }
+    });
+  }
   syncCore();
   if (state.siteType === "complex") {
     state.plate.blockRects = towerBlockRects(state.buildings, state.cores, state.plate);
@@ -530,9 +552,12 @@ export function addCore() {
   emit();
 }
 
+const DEFAULT_TOWER_W = 22;
+const DEFAULT_TOWER_D = 14;
+
 function makeBuilding(index, core) {
   const name = `${101 + index}동`;
-  const tower = defaultTower(core.w, core.d, 30, 14);
+  const tower = defaultTower(core.w, core.d, DEFAULT_TOWER_W, DEFAULT_TOWER_D);
   return {
     id: state.nextId++,
     name,
@@ -567,7 +592,11 @@ export function setSiteType(type) {
   if (type === "complex") {
     if (!state.buildings.length) {
       // 평면이 아직 없으면 임시 크기로 코어를 잡고, generatePlate 때 다시 맞춤.
-      const probe = state.plate || plateFromState();
+      const probe = {
+        ...(state.plate || plateFromState()),
+        expectTowerW: DEFAULT_TOWER_W,
+        expectTowerD: DEFAULT_TOWER_D,
+      };
       const cores = defaultCores(probe, 3);
       state.buildings = [];
       cores.forEach((core, i) => {

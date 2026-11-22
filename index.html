@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=260" />
+    <link rel="stylesheet" href="styles.css?v=261" />
     <script type="importmap">
       {
         "imports": {
@@ -166,7 +166,7 @@
           </div>
           <label class="check" hidden><input type="radio" name="site-type" value="single" checked /> 단일 건물</label>
           <label class="check" hidden><input type="radio" name="site-type" value="complex" /> 단지형 (여러 동 + 지하주차장 1개)</label>
-          <p id="complex-hint" class="hint" hidden>법정 주차대수는 <strong>단지 전체 세대수</strong>로 계산합니다. 동은 위치·층수·외곽만 입력합니다. 지상공원형(지하 차로 2.7m)·<strong>내부 램프</strong>를 기본으로 켭니다. 동 3개 이상은 평면 약 80×58m 이상을 권장합니다.</p>
+          <p id="complex-hint" class="hint" hidden>법정 주차대수는 <strong>단지 전체 세대수</strong>로 계산합니다. 동은 위치·층수·외곽만 입력합니다. 지상공원형(지하 차로 2.7m)·<strong>내부 램프</strong>를 기본으로 켭니다. 동 3개 이상은 평면 약 98×66m 이상·동 외곽은 너무 크지 않게(기본 22×14m)를 권장합니다.</p>
           <div id="building-list-wrap" hidden>
             <table id="building-table" class="building-table">
               <thead>
@@ -605,7 +605,7 @@
         <button type="button" id="wizard-next" class="primary">다음</button>
       </nav>
       <select id="circulation" hidden><option value="ccw" selected>반시계</option></select>
-      <p class="note"><span class="hint">버전 2026-11-22 · r260</span></p>
+      <p class="note"><span class="hint">버전 2026-11-22 · r261</span></p>
     </aside>
     </div>
 
@@ -618,7 +618,7 @@
     <button id="plan-expand-hit" type="button" hidden>expand</button>
     <button id="collapse-plan" type="button" hidden>접기</button>
 
-    <script type="module" src="src/main.js?v=260"></script>
+    <script type="module" src="src/main.js?v=261"></script>
     <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>
