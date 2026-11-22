@@ -1,4 +1,4 @@
-import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint } from "./layout.js?v=261";
+import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint } from "./layout.js?v=262";
 
 const EDGE = { n: "북", e: "동", s: "남", w: "서" };
 
@@ -59,6 +59,13 @@ export function renderSheet(paint, state, info, floorIndex) {
   });
 
   state.stalls.forEach((stall, index) => {
+    const type = stall.parallel || stall.type === "parallel" ? "parallel" : (stall.type || "general");
+    const fill = type === "disabled" ? "rgba(59,130,246,0.28)"
+      : type === "extended" ? "rgba(134,239,172,0.35)"
+        : type === "eco" ? "rgba(234,179,8,0.32)"
+          : type === "parallel" ? "rgba(148,163,184,0.3)"
+            : "rgba(247,244,238,0.9)";
+    paint.fill(xOf(stall.x), yOf(stall.y + stall.d), stall.w * scale, stall.d * scale, fill);
     paint.strokeRect(xOf(stall.x), yOf(stall.y + stall.d), stall.w * scale, stall.d * scale, "#222", 1);
     paint.text(xOf(stall.x + stall.w / 2) - 8, yOf(stall.y + stall.d / 2) + 4, String(index + 1), 11, "#222");
   });

@@ -1,11 +1,11 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=261";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=261";
-import { drawThumb, mountPlan } from "./plan.js?v=261";
-import { stallRuleTargets } from "./stallTypes.js?v=261";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=261";
-import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=261";
-import { bindContextDialog, closeContext, openContext } from "./context.js?v=261";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=261";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=262";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=262";
+import { drawThumb, mountPlan } from "./plan.js?v=262";
+import { stallRuleTargets } from "./stallTypes.js?v=262";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=262";
+import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=262";
+import { bindContextDialog, closeContext, openContext } from "./context.js?v=262";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=262";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -230,8 +230,7 @@ $("generate").addEventListener("click", () => {
 function wizardStepFromSlide(slide) {
   if (slide <= 4) return 1;
   if (slide <= 6) return 2;
-  if (state.resultTab === "model" || state.resultTab === "sheet") return 3;
-  return 2;
+  return 3; // 결과 슬라이드(7): 평면·3D·평면도 탭
 }
 
 function canLeaveWizard(slide) {
@@ -462,9 +461,39 @@ $("overlay-side").addEventListener("click", () => {
 $("remove-selected").addEventListener("click", removeSelection);
 $("to-3d").addEventListener("click", open3d);
 $("back-plan").addEventListener("click", () => { state.resultTab = "plan"; setWizard(6); });
-$("tab-model").addEventListener("click", () => { state.resultTab = "model"; if (wizardSlide !== 7) setWizard(7); else { open3d(); } });
-$("tab-sheet").addEventListener("click", () => { state.resultTab = "sheet"; state.step = 3; if (wizardSlide !== 7) setWizard(7); else emit(); });
-if ($("tab-plan")) $("tab-plan").addEventListener("click", () => { state.resultTab = "plan"; state.step = 2; emit(); });
+$("tab-model").addEventListener("click", () => {
+  state.resultTab = "model";
+  if (wizardSlide !== 7) setWizard(7);
+  open3d();
+});
+$("tab-sheet").addEventListener("click", () => {
+  state.resultTab = "sheet";
+  const show = () => {
+    state.resultTab = "sheet";
+    state.step = 3;
+    emit();
+    requestAnimationFrame(() => {
+      const info = summary();
+      const canvas = $("sheet");
+      if (canvas && state.plate) {
+        drawSheet(canvas, state, { ...info, checkedOn: info.demand.checkedOn }, sheetFloor());
+      }
+    });
+  };
+  if (wizardSlide !== 7) {
+    setWizard(7);
+    window.setTimeout(show, 420);
+  } else {
+    show();
+  }
+});
+if ($("tab-plan")) {
+  $("tab-plan").addEventListener("click", () => {
+    state.resultTab = "plan";
+    state.step = 2;
+    emit();
+  });
+}
 $("sheet-png").addEventListener("click", () => {
   const canvas = $("sheet");
   canvas.toBlob((blob) => downloadBlob("parking-plan.png", blob));
@@ -525,7 +554,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=261")
+    sceneMount = import("./scene.js?v=262")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -1117,7 +1146,15 @@ function buildDemandForm() {
       }
       if (!r.zones.length) {
         box.className = "zone-result warn";
-        box.textContent = `${r.address} — 용도지역 자료가 없습니다.`;
+        const region = regionFromAddress(r.address);
+        if (region) {
+          $("region").value = region;
+          $("region").disabled = true;
+          $("zone-auto").hidden = false;
+        }
+        $("zone").disabled = false;
+        box.innerHTML = `<p>${r.address}</p><p>좌표는 찾았지만 용도지역 레이어 자료가 없습니다. «상세 입력»에서 용도지역을 직접 고르세요.</p>`;
+        read();
         return;
       }
       const lines = r.zones.map((z) => {
@@ -1160,7 +1197,21 @@ function buildDemandForm() {
       read();
     } catch (e) {
       box.className = "zone-result warn";
-      box.textContent = `조회 실패: ${e && e.message ? e.message : e}. 인터넷 연결을 확인해 주세요.`;
+      const fallback = e && e.fallback;
+      if (fallback) {
+        state.demand.siteAddress = fallback.address;
+        const region = fallback.region || regionFromAddress(fallback.address);
+        if (region) {
+          $("region").value = region;
+          $("region").disabled = true;
+          $("zone-auto").hidden = false;
+        }
+        $("zone").disabled = false;
+        box.innerHTML = `<p>${fallback.address}</p><p>${e.message}</p><p class="note">용도지역은 «상세 입력»에서 직접 선택할 수 있습니다.</p>`;
+        read();
+      } else {
+        box.textContent = `조회 실패: ${e && e.message ? e.message : e}. 네트워크·브이월드 연결을 확인해 주세요. «상세 입력»에서 용도지역을 직접 고를 수 있습니다.`;
+      }
     } finally {
       $("zone-lookup").disabled = false;
     }

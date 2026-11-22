@@ -9,11 +9,17 @@ function ceilRate(total, rate) {
   return Math.max(1, Math.ceil(total * rate));
 }
 
-/** 조건(stallRules) → 목표 칸 수 */
+/**
+ * 조건(stallRules) → 목표 칸 수.
+ * legalStalls가 0이면(수요 미입력) placedStalls(실제 배치 수)로 비율을 잡아
+ * 장애인·확장·친환경 색이 도면에 보이게 한다.
+ */
 export function stallRuleTargets(rules = {}) {
   rules = rules || {};
-  const legal = Math.max(0, Number(rules.legalStalls) || 0);
-  const disabledOn = Boolean(rules.disabled) && legal >= 10;
+  const legalDeclared = Math.max(0, Number(rules.legalStalls) || 0);
+  const placed = Math.max(0, Number(rules.placedStalls) || 0);
+  const legal = legalDeclared > 0 ? legalDeclared : placed;
+  const disabledOn = rules.disabled !== false && legal >= 10;
   const disabledRate = disabledOn ? Math.min(0.04, Math.max(0.02, Number(rules.disabledRate) || 0.02)) : 0;
   const disabled = disabledOn ? ceilRate(legal, disabledRate) : 0;
 
@@ -23,7 +29,9 @@ export function stallRuleTargets(rules = {}) {
   let ecoRate = 0;
   if (rules.ecoMode === "on") ecoRate = Math.min(0.2, Math.max(0.01, Number(rules.ecoRate) || 0.05));
   else if (rules.ecoMode === "off") ecoRate = 0;
-  else if (rules.ecoAuto) ecoRate = Math.min(0.2, Math.max(0.01, Number(rules.ecoRate) || 0.05));
+  else if (rules.ecoAuto || (rules.ecoMode === "auto" && legal >= 50)) {
+    ecoRate = Math.min(0.2, Math.max(0.01, Number(rules.ecoRate) || 0.05));
+  }
   const eco = ecoRate && legal >= 50 ? ceilRate(legal, ecoRate) : 0;
 
   return {

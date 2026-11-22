@@ -1,5 +1,5 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=261";
-import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=261";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=262";
+import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=262";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -88,8 +88,17 @@ export function mountPlan(canvas) {
 
     state.stalls.forEach((stall) => {
       if (!shown(stall.phase)) return;
-      ctx.fillStyle = "#f7f4ee";
-      ctx.strokeStyle = "#8a8478";
+      const type = stall.parallel || stall.type === "parallel" ? "parallel" : (stall.type || "general");
+      ctx.fillStyle = type === "disabled" ? "rgba(59, 130, 246, 0.38)"
+        : type === "extended" ? "rgba(134, 239, 172, 0.45)"
+          : type === "eco" ? "rgba(234, 179, 8, 0.4)"
+            : type === "parallel" ? "rgba(148, 163, 184, 0.4)"
+              : "#f7f4ee";
+      ctx.strokeStyle = type === "disabled" ? "#1d4ed8"
+        : type === "extended" ? "#15803d"
+          : type === "eco" ? "#a16207"
+            : type === "parallel" ? "#475569"
+              : "#8a8478";
       ctx.lineWidth = 1 / camera.scale;
       ctx.fillRect(stall.x, stall.y, stall.w, stall.d);
       ctx.strokeRect(stall.x, stall.y, stall.w, stall.d);

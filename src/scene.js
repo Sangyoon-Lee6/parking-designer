@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=261";
-import { state, subscribe, summary } from "./state.js?v=261";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=262";
+import { state, subscribe, summary } from "./state.js?v=262";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -108,7 +108,13 @@ function rebuild(sun) {
   const rampMat = standard("#8d8680", 0.7, paint.groove);
   rampMat.side = THREE.DoubleSide;
   const aisleMat = standard("#2f6b45", 0.42, paint.epoxy);
-  const stallMat = standard("#b7b4ae", 0.8);
+  const stallMats = {
+    general: standard("#b7b4ae", 0.8),
+    extended: standard("#86efac", 0.72),
+    disabled: standard("#3b82f6", 0.62),
+    eco: standard("#eab308", 0.7),
+    parallel: standard("#94a3b8", 0.7),
+  };
   const lineMat = standard("#f4f1ea", 0.4);
   const inMat = standard("#1f6b62", 0.45);
   const outMat = standard("#b5522a", 0.45);
@@ -121,7 +127,7 @@ function rebuild(sun) {
     host = floor;
     addSlab(plate, base, concrete);
     addAisles(base, aisleMat);
-    addStallPads(base, stallMat);
+    addStallPads(base, stallMats);
     host.add(stallLines(base, lineMat));
     addArrows(base);
     state.columns.forEach((column, index) => addColumn(column, index, base, columnMat, hazard));
@@ -489,9 +495,17 @@ function segments(length, cuts) {
   return spans;
 }
 
-function addStallPads(base, material) {
+function stallTypeOf(stall) {
+  if (!stall) return "general";
+  if (stall.parallel || stall.type === "parallel") return "parallel";
+  return stall.type || "general";
+}
+
+function addStallPads(base, materials) {
+  const fallback = materials.general || standard("#b7b4ae", 0.8);
   state.stalls.forEach((stall) => {
-    const pad = new THREE.Mesh(new THREE.BoxGeometry(stall.w - 0.04, 0.02, stall.d - 0.04), material);
+    const mat = materials[stallTypeOf(stall)] || fallback;
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(stall.w - 0.04, 0.02, stall.d - 0.04), mat);
     pad.position.set(stall.x + stall.w / 2, base + 0.03, stall.y + stall.d / 2);
     pad.receiveShadow = true;
     host.add(pad);

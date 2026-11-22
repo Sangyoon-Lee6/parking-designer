@@ -550,7 +550,21 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .check { display: flex; align-items: center; gap: 8px; margin-top: 0; justify-content: flex-start; text-align: left; }
 .check input { width: auto; flex: none; }
 .use-fields { margin: 0 0 4px 18px; }
-#sheet { width: 100%; height: 100%; background: #fff; }
+#sheet-view:not([hidden]) {
+  display: grid;
+  place-items: center;
+  z-index: 3;
+  background: #e8eef4;
+  overflow: auto;
+}
+#sheet {
+  width: min(100%, 1580px);
+  height: auto;
+  max-height: calc(100% - 16px);
+  background: #fff;
+  object-fit: contain;
+  box-shadow: var(--shadow);
+}
 .floors button.on { background: var(--ink); color: #f8fafc; }
 
 .floors {
@@ -834,25 +848,26 @@ body.step-result .context-view {
   display: flex;
   flex-direction: column;
   gap: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .wizard {
   position: relative;
-  flex: 1;
+  flex: 1 0 auto;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .slide {
-  display: grid;
+  display: none;
   gap: 16px;
   opacity: 0;
   filter: blur(10px);
   transform: translateY(10px);
   pointer-events: none;
-  position: absolute;
-  inset: 0;
-  overflow: auto;
   padding-right: 4px;
   transition:
     opacity 0.38s ease,
@@ -861,6 +876,7 @@ body.step-result .context-view {
 }
 
 .slide.on {
+  display: grid;
   opacity: 1;
   filter: blur(0);
   transform: translateY(0);
@@ -868,13 +884,20 @@ body.step-result .context-view {
   position: relative;
 }
 
-.slide[hidden] { display: none !important; }
-
 .slide.leaving {
+  display: grid;
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
   opacity: 0;
   filter: blur(12px);
   transform: translateY(-8px);
+  pointer-events: none;
+  z-index: 1;
 }
+
+.slide[hidden] { display: none !important; }
+
 
 .slide h2 {
   margin: 0;

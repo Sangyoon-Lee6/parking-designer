@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=261";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=262";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,7 +6,7 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=261";
+} from "./rampForms.js?v=262";
 
 export {
   lowerFloorRamp,
@@ -14,7 +14,7 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=261";
+} from "./rampForms.js?v=262";
 
 /**
  * 주차장법 시행규칙 제3조·제6조. 확인 2026-11-08. law.go.kr
@@ -1395,7 +1395,8 @@ function layoutRampChoice(input) {
 
 function layoutCore(input) {
   const plate = normalizePlate(input.plate || input);
-  const typeRules = stallRuleTargets(plate.stallRules);
+  // legalStalls가 비어 있으면 배치 후 kept 개수로 다시 잡는다(아래 assign 직전).
+  let typeRules = stallRuleTargets(plate.stallRules);
   const spec = {
     axis: "x",
     dir: "ccw",   // 순환 방향은 고르지 않는다: 외부 램프는 반시계(우측통행), 내부 램프는 buildArrows에서 램프 방향을 따른다.
@@ -1823,6 +1824,10 @@ function layoutCore(input) {
     const extra = parallelStalls(aisles, blocks, plate, { d: STALL_D, l: STALL_W, type: "general", phase: "filler", center: false });
     extra.forEach((stall) => keptStalls.push(stall));
   }
+  typeRules = stallRuleTargets({
+    ...(plate.stallRules || {}),
+    placedStalls: keptStalls.length,
+  });
   const typed = assignStallTypes(keptStalls, typeRules, {
     plate, columns, blocks: stallBlocks, cores, ramp, openings, gridX, gridY,
     ecoAnchor: ecoAnchorOf(ramp, plate),
@@ -1846,16 +1851,21 @@ function layoutCore(input) {
   if (blockRects.length) {
     typedStalls = typedStalls.filter((stall) => !blockRects.some((b) => overlapArea(stall, b) > 0.05));
     // 막은 구역에 걸린 장애인 칸이 빠지면 동별 분배가 깨지므로, 남은 칸으로 유형을 다시 붙인다.
-    const retarget = assignStallTypes(
-      typedStalls.map((s) => ({ ...s, type: s.parallel || s.type === "parallel" ? "parallel" : "general", nearCore: undefined })),
-      typeRules,
-      {
-        plate, columns, blocks: stallBlocks, cores, ramp, openings, gridX, gridY,
-        ecoAnchor: ecoAnchorOf(ramp, plate),
-        reach: plate.trimDeadEnds ? (rect) => stallReachable(rect, aisles) : null,
-        blockRects,
-      },
-    );
+      const retargetRules = stallRuleTargets({
+        ...(plate.stallRules || {}),
+        placedStalls: typedStalls.length,
+      });
+      const retarget = assignStallTypes(
+        typedStalls.map((s) => ({ ...s, type: s.parallel || s.type === "parallel" ? "parallel" : "general", nearCore: undefined })),
+        retargetRules,
+        {
+          plate, columns, blocks: stallBlocks, cores, ramp, openings, gridX, gridY,
+          ecoAnchor: ecoAnchorOf(ramp, plate),
+          reach: plate.trimDeadEnds ? (rect) => stallReachable(rect, aisles) : null,
+          blockRects,
+        },
+      );
+      typeRules = retargetRules;
     typedStalls = retarget.stalls;
     typed.counts = retarget.counts;
     typed.targets = retarget.targets;
@@ -3703,7 +3713,7 @@ function layoutWithGap(input) {
       // 빠진 칸 때문에 장애인 동별 분배가 깨질 수 있어 유형을 다시 붙인다.
       const retarget = assignStallTypes(
         out.stalls.map((s) => ({ ...s, type: s.parallel || s.type === "parallel" ? "parallel" : "general", nearCore: undefined })),
-        stallRuleTargets(raw.stallRules),
+        stallRuleTargets({ ...(raw.stallRules || {}), placedStalls: out.stalls.length }),
         { plate: out.plate, cores: out.cores || res.cores, blockRects: outerBlocks },
       );
       out.stalls = retarget.stalls;
