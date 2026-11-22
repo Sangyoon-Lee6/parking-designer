@@ -1,11 +1,11 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=264";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=264";
-import { drawThumb, mountPlan } from "./plan.js?v=264";
-import { stallRuleTargets } from "./stallTypes.js?v=264";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=264";
-import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=264";
-import { bindContextDialog, closeContext, openContext, openSitePicker, updatePickerMarker } from "./context.js?v=264";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=264";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=265";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=265";
+import { drawThumb, mountPlan } from "./plan.js?v=265";
+import { stallRuleTargets } from "./stallTypes.js?v=265";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=265";
+import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=265";
+import { bindContextDialog, closeContext, openContext, openSitePicker, updatePickerMarker } from "./context.js?v=265";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=265";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -314,6 +314,13 @@ function setWizard(next, { silent = false } = {}) {
     if (next === 7 && state.resultTab === "model" && !sceneMount) {
       state.resultTab = "plan";
     }
+    // 결과 단계 진입: 램프·코어 배치를 고정한 채 최적 주차 배치를 다시 찾는다
+    if (next === 7 && state.plate) {
+      busy("최적 주차 배치를 다시 찾는 중…", () => {
+        syncPlateMeta();
+        optimizeLayout();
+      });
+    }
     wizardAnimating = true;
     nextEl.hidden = false;
     if (curEl && prev !== next) {
@@ -607,7 +614,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=264")
+    sceneMount = import("./scene.js?v=265")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;

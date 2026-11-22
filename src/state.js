@@ -1,6 +1,7 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=264";
+import { calculateDemand, emptyDemand } from "./demand.js?v=265";
 import {
   basementCount,
+  bestLayoutFor,
   clampCore,
   clampOpening,
   defaultCore,
@@ -16,7 +17,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=264";
+} from "./layout.js?v=265";
 
 export const state = {
   step: 1,
@@ -177,7 +178,23 @@ export function updateSiteMargins(all, partial) {
   if (partial && typeof partial === "object") {
     state.siteMargins = { ...(state.siteMargins || {}), ...partial };
   }
+  syncPlateMeta();
   emit();
+}
+
+/** 이격·램프 형태 등 UI 상태를 plate에 동기화(도면 점선·재배치에 필요). */
+export function syncPlateMeta() {
+  if (!state.plate) return;
+  state.plate = {
+    ...state.plate,
+    siteMargin: round1(state.siteMargin),
+    siteMargins: { ...(state.siteMargins || {}) },
+    rampForm: state.rampForm || "auto",
+    lowerRampForm: state.lowerRampForm || "auto",
+    lowerRampMode: state.lowerRampMode || "alternate",
+    roadEdge: state.roadEdge || "w",
+    rampPos: state.rampPos || "auto",
+  };
 }
 
 export function issueGroups() {
@@ -286,9 +303,13 @@ export function applyVariant(index) {
   emit();
 }
 
-export function rebuildLayout() {
+/**
+ * 램프·코어 위치를 유지한 채 배치안을 다시 돌려 최적 주차 배치를 고른다.
+ * (베이 방향·packFrom 등 variantSpecs를 모두 비교)
+ */
+export function optimizeLayout() {
   if (!state.plate) return;
-  // 코어를 끌면 동 외곽(blockRects)도 새 위치로 다시 계산.
+  syncPlateMeta();
   if (state.siteType === "complex" && state.buildings.length) {
     state.plate = {
       ...state.plate,
@@ -296,7 +317,13 @@ export function rebuildLayout() {
       blockRects: towerBlockRects(state.buildings, state.cores, state.plate),
     };
   }
-  const result = layoutParking({
+  // 램프 form을 현재 설정에 맞춤
+  state.ramps = (state.ramps || []).map((r) => ({
+    ...r,
+    placement: state.rampPlacement,
+    form: state.rampForm || r.form || "auto",
+  }));
+  const best = bestLayoutFor({
     plate: state.plate,
     cores: state.cores,
     openings: state.openings,
@@ -305,17 +332,19 @@ export function rebuildLayout() {
     entranceMode: state.entranceMode,
     circulation: state.circulation,
     lockRamp: true,
-    spec: state.spec || {
-      axis: "x",
-      dir: state.circulation === "cw" ? "cw" : "ccw",
-      packFrom: "start",
-      bayMode: "max",
-      rampShift: 0,
-      rampPlacement: state.rampPlacement,
-      entranceMode: "follow",
-    },
+    noCoreRescue: true,
   });
-  adopt(result, true);
+  if (best) {
+    adopt(best, true);
+    state.spec = best.spec || state.spec;
+  }
+  // UI 후보 목록도 갱신
+  refreshVariants();
+}
+
+export function rebuildLayout() {
+  // 호환: 단일 배치 대신 최적 재탐색
+  optimizeLayout();
 }
 
 function seedAccess() {

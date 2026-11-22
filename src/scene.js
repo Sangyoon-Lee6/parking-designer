@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=264";
-import { state, subscribe, summary } from "./state.js?v=264";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=265";
+import { state, subscribe, summary } from "./state.js?v=265";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -142,6 +142,7 @@ function rebuild(sun) {
       state.lowerRampMode || (plate && plate.lowerRampMode) || "alternate",
     );
     levelRamps.forEach((ramp) => addRamp(ramp, rampMat, base, hazard));
+    addSiteSetback(base);
     addWalls(concrete, base);
     addGates(base);
     state.openings.forEach((opening) => {
@@ -164,7 +165,13 @@ function rebuild(sun) {
     const box = rampFootprint(ramp, plate);
     return Math.max(reach, Math.max(0, -box.x), Math.max(0, -box.y), Math.max(0, box.x + box.w - plate.width), Math.max(0, box.y + box.d - plate.depth));
   }, 0);
-  const span = Math.max(plate.width + rampReach, plate.depth + rampReach, stack * FLOOR_H, towerH + FLOOR_H);
+  const siteM = siteMarginsOf({
+    ...plate,
+    siteMargin: plate.siteMargin != null ? plate.siteMargin : state.siteMargin,
+    siteMargins: plate.siteMargins || state.siteMargins,
+  });
+  const marginReach = Math.max(siteM.n || 0, siteM.s || 0, siteM.e || 0, siteM.w || 0, rampReach);
+  const span = Math.max(plate.width + marginReach, plate.depth + marginReach, stack * FLOOR_H, towerH + FLOOR_H);
   sun.position.set(-plate.width * 0.2, span, plate.depth * 0.2);
   sun.target.position.set(plate.width / 2, single ? 1 : -drawn * FLOOR_H / 2, plate.depth / 2);
   sun.shadow.camera.left = -span;
@@ -344,7 +351,8 @@ function addRampRibbon(shape, ramp, material, base, H) {
     const p1 = path[i + 1];
     const dx = p1.x - p0.x;
     const dz = p1.y - p0.y;
-    const len = Math.hypot(dx, dz) || 1;
+    const len = Math.hypot(dx, dz);
+    if (len < 0.08) continue; // 모서리 중복점으로 생기는 팬/겹침 메시 방지
     const nx = (-dz / len) * half;
     const nz = (dx / len) * half;
     const y0 = base + H - (p0.h == null ? 0 : p0.h);
@@ -409,6 +417,38 @@ function addRampQuad(ramp, footprint, material, base, H) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   host.add(mesh);
+}
+
+/** 대지 이격 경계(점선) — 결과 3D에서도 이격이 보이게 */
+function addSiteSetback(base) {
+  const plate = state.plate;
+  if (!plate) return;
+  const m = siteMarginsOf({
+    ...plate,
+    siteMargin: plate.siteMargin != null ? plate.siteMargin : state.siteMargin,
+    siteMargins: plate.siteMargins || state.siteMargins,
+  });
+  if (!(m.n > 0 || m.s > 0 || m.e > 0 || m.w > 0)) return;
+  const y = base + 0.08;
+  const pts = [
+    new THREE.Vector3(-m.w, y, -m.s),
+    new THREE.Vector3(plate.width + m.e, y, -m.s),
+    new THREE.Vector3(plate.width + m.e, y, plate.depth + m.n),
+    new THREE.Vector3(-m.w, y, plate.depth + m.n),
+    new THREE.Vector3(-m.w, y, -m.s),
+  ];
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  const mat = new THREE.LineDashedMaterial({
+    color: 0x64748b,
+    dashSize: 1.6,
+    gapSize: 1.0,
+    linewidth: 1,
+  });
+  const line = new THREE.Line(geo, mat);
+  line.computeLineDistances();
+  host.add(line);
+  const labelM = Math.max(m.n, m.s, m.e, m.w);
+  addLabel(`대지 이격 ${labelM}m`, plate.width / 2, base + 0.55, -m.s - 1.2, 10);
 }
 
 function addWalls(material, base) {

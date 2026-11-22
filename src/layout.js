@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=264";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=265";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,7 +6,7 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=264";
+} from "./rampForms.js?v=265";
 
 export {
   lowerFloorRamp,
@@ -14,7 +14,7 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=264";
+} from "./rampForms.js?v=265";
 
 /**
  * 주차장법 시행규칙 제3조·제6조. 확인 2026-11-08. law.go.kr
@@ -420,7 +420,40 @@ export function rampShape(ramp, plate) {
 }
 function rampShapeRaw(ramp, plate) {
   const form = rampFormOf(ramp, plate && plate.rampForm);
-  if (form === "spiral") return spiralRampShape(ramp, plate);
+  if (form === "spiral") {
+    const spiral = spiralRampShape(ramp, plate);
+    // 중심선이 평면 밖으로 나가거나 조각이 크게 벗어나면 실패로 본다(AABB 패딩은 무시).
+    const pathOut = (spiral.path || []).some((pt) => (
+      pt.x < -0.05 || pt.y < -0.05
+      || pt.x > plate.width + 0.05 || pt.y > plate.depth + 0.05
+    ));
+    const piecesOut = (spiral.pieces || []).some((box) => (
+      box.x < -0.6 || box.y < -0.6
+      || box.x + box.w > plate.width + 0.6
+      || box.y + box.d > plate.depth + 0.6
+    ));
+    const outside = pathOut || piecesOut;
+    if (spiral.ok && !outside) return spiral;
+    // 직선/90°로 대체해 끼어 든 팬 메시를 막는다
+    let alt = rampShapeRaw({ ...ramp, form: "auto" }, { ...plate, rampForm: "auto" });
+    if (!alt.ok) {
+      const vertical = ramp.edge === "n" || ramp.edge === "s";
+      const across = vertical ? plate.depth : plate.width;
+      const maxL = Math.max(6, across - insetOf(ramp) - 6);
+      alt = rampShapeRaw(
+        { ...ramp, form: "straight", length: Math.min(Number(ramp.length) || maxL, maxL) },
+        { ...plate, rampForm: "straight" },
+      );
+    }
+    return {
+      ...alt,
+      ok: true,
+      reason: spiral.reason || (outside
+        ? "외곽 회전 경로가 평면을 벗어나 자동 형태로 대체했습니다"
+        : "외곽 회전 램프를 이 평면에 둘 수 없어 자동 형태로 대체했습니다"),
+      fallbackFrom: "spiral",
+    };
+  }
 
   const box = rampFootprint(ramp, plate);
   const H = floorHeightOf(plate);
@@ -655,7 +688,15 @@ export function rampFootprint(ramp, plate) {
 function rampFootprintRaw(ramp, plate) {
   if (rampFormOf(ramp, plate && plate.rampForm) === "spiral") {
     const shape = spiralRampShape(ramp, plate);
-    return shape.footprint || shape.pieces[0];
+    if (shape.ok) return shape.footprint || shape.pieces[0];
+    // 실패 시 직선 footprint로 (깨진 외곽 AABB가 주차 영역을 삼키지 않게)
+    const { edge, t, width, length } = ramp;
+    const external = (ramp.placement || "internal") === "external";
+    const k = insetOf(ramp);
+    if (edge === "s") return { x: t - width / 2, y: external ? -length : k, w: width, d: length };
+    if (edge === "n") return { x: t - width / 2, y: external ? plate.depth : plate.depth - k - length, w: width, d: length };
+    if (edge === "w") return { x: external ? -length : k, y: t - width / 2, w: length, d: width };
+    return { x: external ? plate.width : plate.width - k - length, y: t - width / 2, w: length, d: width };
   }
   if ((ramp.placement || "internal") === "external" && rampFormOf(ramp, plate && plate.rampForm) === "curve90") {
     const shape = externalCurve90Shape(ramp, plate, {
@@ -1507,6 +1548,10 @@ function layoutCore(input) {
   const bay = stallsPerBay(plate.spacing, plate.columnWidth, plate.minClear);
   const bayStats = { total: 0, triple: 0 };
   const shape = rampShape(ramp, plate);
+  // 외곽 회전이 실패한 경우 form을 실제 쓴 형태로 낮춰, 이후 층간·점유 계산이 깨진 spiral을 다시 쓰지 않게 한다.
+  if (shape.fallbackFrom === "spiral") {
+    ramp.form = shape.kind === "curved" ? "curve90" : "straight";
+  }
   const internal = (ramp.placement || "internal") === "internal" || shape.kind === "spiral" || shape.externalCurve;
   // 지하 2층+ 다른 경로(alternate)면 층간 램프 자리도 평면에 비워 둔다.
   const lowerMode = plate.lowerRampMode || input.lowerRampMode || "alternate";
@@ -1898,6 +1943,9 @@ function layoutCore(input) {
   issues.push(...slopeIssues([ramp], plate));
   issues.push(...siteIssues([ramp], plate));
   issues.push(...roadIssues([ramp], plate));
+  if (shape.fallbackFrom === "spiral" && shape.reason) {
+    issues.push({ type: "notice", label: shape.reason });
+  }
   // 코어끼리 간격이 0보다 크고 AISLE(6m) 미만이면 차로가 끊김 → overlap 오류.
   for (let i = 0; i < cores.length; i += 1) {
     for (let j = i + 1; j < cores.length; j += 1) {
@@ -3102,6 +3150,36 @@ function compareVariants(a, b) {
   if (a.metrics.areaPerStall !== b.metrics.areaPerStall) return a.metrics.areaPerStall - b.metrics.areaPerStall;
   if (a.metrics.similarity !== b.metrics.similarity) return b.metrics.similarity - a.metrics.similarity;
   return 0;
+}
+
+/** 배치안 점수(클수록 좋음). 코어·램프 고정 후 재탐색에 사용. */
+export function scoreLayout(result) {
+  if (!result || !result.metrics) return -1e9;
+  const m = result.metrics;
+  return (m.valid ? 100000 : 0)
+    + (m.stalls || 0) * 10
+    - (m.overlapCount || 0) * 200
+    - (m.columnHits || 0) * 50
+    - (m.connected === false ? 5000 : 0);
+}
+
+/**
+ * 램프·코어를 고정한 채 배치안(가로/세로 베이 등)을 다시 돌려 최적안을 고른다.
+ */
+export function bestLayoutFor(input) {
+  const placement = input.rampPlacement || input.ramps?.[0]?.placement || "internal";
+  const specs = variantSpecs(placement);
+  let best = null;
+  specs.forEach((spec) => {
+    const result = layoutParking({
+      ...input,
+      spec,
+      lockRamp: input.lockRamp !== false,
+      noCoreRescue: input.noCoreRescue !== false,
+    });
+    if (!best || scoreLayout(result) > scoreLayout(best)) best = result;
+  });
+  return best;
 }
 
 export function countOverlaps(result, cores, rampBoxes, plate) {

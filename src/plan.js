@@ -1,5 +1,5 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=264";
-import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=264";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=265";
+import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=265";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -313,10 +313,15 @@ export function mountPlan(canvas) {
 
 function viewBounds() {
   const plate = state.plate;
-  let minX = -1;
-  let minY = -1;
-  let maxX = plate.width + 1;
-  let maxY = plate.depth + 1;
+  const m = siteMarginsOf({
+    ...plate,
+    siteMargin: plate.siteMargin != null ? plate.siteMargin : state.siteMargin,
+    siteMargins: plate.siteMargins || state.siteMargins,
+  });
+  let minX = -Math.max(1, m.w);
+  let minY = -Math.max(1, m.s);
+  let maxX = plate.width + Math.max(1, m.e);
+  let maxY = plate.depth + Math.max(1, m.n);
   state.ramps.forEach((ramp) => {
     const box = rampFootprint(ramp, plate);
     minX = Math.min(minX, box.x);
@@ -586,13 +591,61 @@ function dimension(ctx, plate) {
 }
 
 function drawSite(ctx, plate) {
-  const margin = plate.siteMargin || state.siteMargin || 0;
-  if (!state.ramps.some((ramp) => ramp.placement === "external")) return;
+  // 대지 이격: 외부 램프 여부와 무관하게 점선으로 표시 (공통·방향별)
+  const m = siteMarginsOf({
+    ...plate,
+    siteMargin: plate.siteMargin != null ? plate.siteMargin : state.siteMargin,
+    siteMargins: plate.siteMargins || state.siteMargins,
+  });
+  if (!(m.n > 0 || m.s > 0 || m.e > 0 || m.w > 0)) return;
+  const x0 = -m.w;
+  const y0 = -m.s;
+  const x1 = plate.width + m.e;
+  const y1 = plate.depth + m.n;
   ctx.save();
-  ctx.strokeStyle = "#8a8175";
-  ctx.lineWidth = 1 / camera.scale;
-  ctx.strokeRect(-margin, -margin, plate.width + margin * 2, plate.depth + margin * 2);
+  ctx.strokeStyle = "#64748b";
+  ctx.fillStyle = "#64748b";
+  ctx.lineWidth = 1.4 / camera.scale;
+  ctx.setLineDash([1.8, 1.2]);
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1, y0);
+  ctx.lineTo(x1, y1);
+  ctx.lineTo(x0, y1);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // 이격 치수 라벨
+  const fs = 12 / camera.scale;
+  ctx.font = `${fs}px "Pretendard", sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  if (m.s > 0.05) ctx.fillText(`이격 ${fmtM(m.s)}`, plate.width / 2, -m.s / 2);
+  if (m.n > 0.05) ctx.fillText(`이격 ${fmtM(m.n)}`, plate.width / 2, plate.depth + m.n / 2);
+  if (m.w > 0.05) {
+    ctx.save();
+    ctx.translate(-m.w / 2, plate.depth / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(`이격 ${fmtM(m.w)}`, 0, 0);
+    ctx.restore();
+  }
+  if (m.e > 0.05) {
+    ctx.save();
+    ctx.translate(plate.width + m.e / 2, plate.depth / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(`이격 ${fmtM(m.e)}`, 0, 0);
+    ctx.restore();
+  }
+  // 주차장 외벽(실선)과 구분
+  ctx.strokeStyle = "#1e293b";
+  ctx.lineWidth = 2 / camera.scale;
+  ctx.strokeRect(0, 0, plate.width, plate.depth);
   ctx.restore();
+}
+
+function fmtM(v) {
+  const n = Number(v);
+  return `${Number.isInteger(n) ? n : n.toFixed(1)}m`;
 }
 
 function overlayImage() {

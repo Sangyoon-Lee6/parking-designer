@@ -468,17 +468,18 @@ function edgeInnerLip(edge, W, Ww, Dd) {
 /** fromEdge → nextEdge 모서리 90° 곡선. */
 function cornerTurn(fromEdge, nextEdge, W, Ri, Rc, Ww, Dd, useCw) {
   const key = `${fromEdge}${nextEdge}`;
-  // 중심 = 모서리에서 안쪽으로 (W/2 + 거리?) — 내변 Ri가 램프 안쪽 연석.
-  // 중심선 반경 Rc = Ri + W/2, 중심은 외곽 모서리에서 Rc만큼 안쪽 대각.
+  // 외벽 모서리에 외변을 붙이려면 중심은 (Ri+W, Ri+W).
+  // (예전 Rc 중심은 외변이 평면 밖으로 W/2 나가 팬/끼임 메시가 됐다.)
+  const Ro = Ri + W;
   const centers = {
-    ws: { cx: Rc, cy: Rc, a0: Math.PI, a1: Math.PI * 1.5 },       // 서→남 (cw)
-    se: { cx: Ww - Rc, cy: Rc, a0: Math.PI * 1.5, a1: Math.PI * 2 }, // 남→동
-    en: { cx: Ww - Rc, cy: Dd - Rc, a0: 0, a1: Math.PI * 0.5 },     // 동→북
-    nw: { cx: Rc, cy: Dd - Rc, a0: Math.PI * 0.5, a1: Math.PI },    // 북→서
-    wn: { cx: Rc, cy: Dd - Rc, a0: Math.PI, a1: Math.PI * 0.5 },    // 서→북 (ccw)
-    ne: { cx: Ww - Rc, cy: Dd - Rc, a0: Math.PI * 0.5, a1: 0 },     // 북→동
-    es: { cx: Ww - Rc, cy: Rc, a0: 0, a1: -Math.PI * 0.5 },         // 동→남
-    sw: { cx: Rc, cy: Rc, a0: -Math.PI * 0.5, a1: -Math.PI },      // 남→서
+    ws: { cx: Ro, cy: Ro, a0: Math.PI, a1: Math.PI * 1.5 },       // 서→남 (cw)
+    se: { cx: Ww - Ro, cy: Ro, a0: Math.PI * 1.5, a1: Math.PI * 2 }, // 남→동
+    en: { cx: Ww - Ro, cy: Dd - Ro, a0: 0, a1: Math.PI * 0.5 },     // 동→북
+    nw: { cx: Ro, cy: Dd - Ro, a0: Math.PI * 0.5, a1: Math.PI },    // 북→서
+    wn: { cx: Ro, cy: Dd - Ro, a0: Math.PI, a1: Math.PI * 0.5 },    // 서→북 (ccw)
+    ne: { cx: Ww - Ro, cy: Dd - Ro, a0: Math.PI * 0.5, a1: 0 },     // 북→동
+    es: { cx: Ww - Ro, cy: Ro, a0: 0, a1: -Math.PI * 0.5 },         // 동→남
+    sw: { cx: Ro, cy: Ro, a0: -Math.PI * 0.5, a1: -Math.PI },      // 남→서
   };
   const c = centers[key] || centers.ws;
   const steps = 8;

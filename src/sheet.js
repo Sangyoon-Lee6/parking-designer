@@ -1,4 +1,4 @@
-import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint } from "./layout.js?v=264";
+import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint, siteMarginsOf } from "./layout.js?v=265";
 
 const EDGE = { n: "북", e: "동", s: "남", w: "서" };
 
@@ -24,10 +24,15 @@ export function renderSheet(paint, state, info, floorIndex) {
   }
 
   const rampBoxes = state.ramps.map((ramp) => rampFootprint(ramp, plate));
-  const minX = Math.min(0, ...rampBoxes.map((box) => box.x), -(plate.siteMargin || 0));
-  const minY = Math.min(0, ...rampBoxes.map((box) => box.y));
-  const maxX = Math.max(plate.width, ...rampBoxes.map((box) => box.x + box.w));
-  const maxY = Math.max(plate.depth, ...rampBoxes.map((box) => box.y + box.d));
+  const siteM = siteMarginsOf({
+    ...plate,
+    siteMargin: plate.siteMargin != null ? plate.siteMargin : state.siteMargin,
+    siteMargins: plate.siteMargins || state.siteMargins,
+  });
+  const minX = Math.min(0, ...rampBoxes.map((box) => box.x), -siteM.w);
+  const minY = Math.min(0, ...rampBoxes.map((box) => box.y), -siteM.s);
+  const maxX = Math.max(plate.width, ...rampBoxes.map((box) => box.x + box.w), plate.width + siteM.e);
+  const maxY = Math.max(plate.depth, ...rampBoxes.map((box) => box.y + box.d), plate.depth + siteM.n);
   const spanX = maxX - minX;
   const spanY = maxY - minY;
   const margin = { l: 110, t: 78, r: 360, b: 170 };
@@ -41,11 +46,21 @@ export function renderSheet(paint, state, info, floorIndex) {
 
   paint.text(margin.l, 48, `${state.demand?.projectName || "주차장"}  지하 ${floorIndex + 1}층 평면도`, 20, "#111");
 
-  const external = state.ramps.some((ramp) => ramp.placement === "external");
-  if (external && plate.siteMargin) {
-    paint.strokeRect(xOf(-plate.siteMargin), yOf(plate.depth + plate.siteMargin), (plate.width + plate.siteMargin * 2) * scale, (plate.depth + plate.siteMargin * 2) * scale, "#9aa3ad", 1);
+  // 대지 이격 점선 (방향별)
+  if (siteM.n > 0 || siteM.s > 0 || siteM.e > 0 || siteM.w > 0) {
+    paint.strokeRect(
+      xOf(-siteM.w),
+      yOf(plate.depth + siteM.n),
+      (plate.width + siteM.w + siteM.e) * scale,
+      (plate.depth + siteM.n + siteM.s) * scale,
+      "#64748b",
+      1.2,
+      true,
+    );
+    paint.text(xOf(plate.width / 2) - 28, yOf(-siteM.s / 2) + 4, `이격 남 ${siteM.s}m`, 11, "#475569");
+    paint.text(xOf(plate.width / 2) - 28, yOf(plate.depth + siteM.n / 2) + 4, `이격 북 ${siteM.n}m`, 11, "#475569");
   }
-  paint.strokeRect(xOf(0), yOf(plate.depth), plate.width * scale, plate.depth * scale, "#111", external ? 1.2 : 2.2, external);
+  paint.strokeRect(xOf(0), yOf(plate.depth), plate.width * scale, plate.depth * scale, "#111", 2.2);
 
   const xs = state.gridX?.length ? state.gridX : uniqueSorted([0, plate.width]);
   const ys = state.gridY?.length ? state.gridY : uniqueSorted([0, plate.depth]);
