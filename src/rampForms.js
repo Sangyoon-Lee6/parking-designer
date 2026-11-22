@@ -190,23 +190,25 @@ export function spiralRampShape(ramp, plate) {
     reason = "평면이 작아 외곽 회전 램프(내변 6m·폭 6.5m)를 둘 수 없습니다";
   }
 
-  // 진행 방향: 진입 변에서 t가 작은 쪽 모서리로 가며 시계/반시계로 외곽을 돈다.
+  // 진행 방향: 진입 변에서 더 긴 쪽 직선이 나오도록 시계/반시계를 고른다.
   const startEdge = ramp.edge || "w";
   const along0 = startEdge === "n" || startEdge === "s" ? Ww : Dd;
   const t0 = clamp(Number(ramp.t) || along0 / 2, W + Ri, Math.max(W + Ri, along0 - (W + Ri)));
-  const towardLow = t0 <= along0 / 2;
   // 외곽을 따라 도는 변 순서 (차 진행).
   const cw = { w: ["w", "s", "e", "n"], s: ["s", "e", "n", "w"], e: ["e", "n", "w", "s"], n: ["n", "w", "s", "e"] };
   const ccw = { w: ["w", "n", "e", "s"], s: ["s", "w", "n", "e"], e: ["e", "s", "w", "n"], n: ["n", "e", "s", "w"] };
-  // west+towardLow → 남쪽(작은 y)으로 = cw의 w→s. west+!towardLow → 북쪽 = ccw.
-  const useCw = (startEdge === "w" && towardLow) || (startEdge === "e" && !towardLow)
-    || (startEdge === "s" && !towardLow) || (startEdge === "n" && towardLow);
-  const order = (useCw ? cw : ccw)[startEdge];
-
   // 직선 구간 최대 경사 17%, 모서리 곡선 14%로 층고를 나눈다.
   const needStraight = minStraightRampLengthLocal(H, tr);
   const needCurve = minCurvePathLength(H, tr);
   const targetLen = Math.max(needStraight, needCurve);
+  const minFirst = Math.max(8, Math.min(14, needStraight * 0.45));
+  const lenCw = edgeRun(startEdge, startEdge, t0, true, W, Ri, Ww, Dd, true).len;
+  const lenCcw = edgeRun(startEdge, startEdge, t0, true, W, Ri, Ww, Dd, false).len;
+  let useCw = lenCw >= lenCcw;
+  if (Math.max(lenCw, lenCcw) < minFirst - 0.05) {
+    reason = reason || "진입 위치가 모서리에 너무 가까워 외곽 회전 램프를 둘 수 없습니다";
+  }
+  const order = (useCw ? cw : ccw)[startEdge];
 
   const path = [];
   const polygons = [];
@@ -218,6 +220,8 @@ export function spiralRampShape(ramp, plate) {
 
   const pushPt = (x, y, ds, slope) => {
     if (done) return;
+    // 중복·극소 구간은 점에 넣지 않아 팬 메시를 막는다
+    if (ds < 0.05) return;
     const drop = Math.min(H - hAcc, ds * slope);
     sAcc += ds;
     hAcc += drop;
@@ -229,7 +233,7 @@ export function spiralRampShape(ramp, plate) {
   const start = edgePoint(startEdge, t0, W / 2, Ww, Dd);
   path.push({ x: round3(start.x), y: round3(start.y), s: 0, h: 0 });
 
-  for (let ei = 0; ei < order.length * 2 && !done; ei += 1) {
+  for (let ei = 0; ei < order.length * 2 && !done && !reason; ei += 1) {
     const edge = order[ei % 4];
     const next = order[(ei + 1) % 4];
     const run = edgeRun(edge, startEdge, t0, ei === 0, W, Ri, Ww, Dd, useCw);
@@ -303,6 +307,12 @@ export function spiralRampShape(ramp, plate) {
   // 전체 AABB
   const xs = path.map((p) => p.x);
   const ys = path.map((p) => p.y);
+  const spanX = Math.max(...xs) - Math.min(...xs);
+  const spanY = Math.max(...ys) - Math.min(...ys);
+  // 모서리 한쪽만 도는 짧은 호는 팬처럼 보이므로 거절
+  if (!reason && path.length >= 2 && Math.min(spanX, spanY) < W * 0.8 && Math.max(spanX, spanY) < needStraight * 0.85) {
+    reason = "외곽 회전 경로가 모서리에만 몰려 자동 형태로 대체합니다";
+  }
   const pad = W / 2 + 0.2;
   const footprint = {
     x: round3(Math.min(...xs) - pad),
