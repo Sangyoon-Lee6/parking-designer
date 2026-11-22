@@ -1,5 +1,5 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=262";
-import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=262";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=263";
+import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=263";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -118,9 +118,9 @@ export function mountPlan(canvas) {
 
     const blockedRamps = new Set(state.issues.filter((issue) => issue.type === "ramp").map((issue) => issue.id));
     const groundDraw = rampsForLevel(state.ramps, plate, 0, "same");
-    const spiralOnly = groundDraw.every((r) => (r.form || state.rampForm) === "spiral");
+    const lowerMode = state.lowerRampMode || (plate && plate.lowerRampMode) || "alternate";
     const drawList = groundDraw.concat(
-      !spiralOnly && (state.lowerRampMode || "alternate") === "alternate"
+      lowerMode === "alternate"
         ? rampsForLevel(state.ramps, plate, 1, "alternate").map((r) => ({ ...r, _lower: true }))
         : [],
     );

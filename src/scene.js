@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=262";
-import { state, subscribe, summary } from "./state.js?v=262";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel } from "./layout.js?v=263";
+import { state, subscribe, summary } from "./state.js?v=263";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -88,6 +88,7 @@ function rebuild(sun) {
     openings: state.openings,
     ramps: state.ramps,
     rampForm: state.rampForm,
+    lowerRampForm: state.lowerRampForm,
     lowerRampMode: state.lowerRampMode,
     route: state.route,
     columns: state.columns.length,

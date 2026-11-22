@@ -22,11 +22,25 @@ export const RAMP_R_IN = 6;
 export const RAMP_CURVE_W = 6.5;
 
 export const RAMP_FORMS = ["auto", "straight", "curve90", "spiral"];
+export const LOWER_RAMP_FORMS = ["auto", "same", "straight", "curve90", "spiral"];
 export const LOWER_RAMP_MODES = ["alternate", "same"];
 
 export function rampFormOf(ramp, fallback = "auto") {
   const f = (ramp && ramp.form) || fallback || "auto";
   return RAMP_FORMS.includes(f) ? f : "auto";
+}
+
+/** 지상 형태 + 사용자 선택 → 층간(B2↓) 형태 */
+export function resolveLowerRampForm(groundForm, lowerForm = "auto") {
+  const g = RAMP_FORMS.includes(groundForm) ? groundForm : "auto";
+  const pick = LOWER_RAMP_FORMS.includes(lowerForm) ? lowerForm : "auto";
+  if (pick === "same") return g;
+  if (pick !== "auto") return pick;
+  // 자동: 지상이 외곽 회전이면 연속, 직선이면 깊이 맞춰 곡선 후보, 그 외는 유지
+  if (g === "spiral") return "spiral";
+  if (g === "straight") return "auto";
+  if (g === "auto") return "curve90";
+  return g;
 }
 
 export function floorHeightOf(plate) {
@@ -83,51 +97,79 @@ function clamp(v, a, b) {
 }
 
 /**
- * 지하 2층 이하용 램프: 지상→B1과 다른 경로.
- * alternate = 반대쪽 변 내부형 / same = 동일 복제
+ * 지하 2층 이하용 램프: 지상→B1과 경로·형태를 나눌 수 있다.
+ * mode: alternate = 반대쪽 변 / same = 동일 XY
+ * lowerForm: auto|same|straight|curve90|spiral (plate.lowerRampForm)
  */
-export function lowerFloorRamp(groundRamp, plate, mode = "alternate") {
+export function lowerFloorRamp(groundRamp, plate, mode = "alternate", lowerForm = "auto") {
   if (!groundRamp) return null;
-  if (mode === "same") return { ...groundRamp, level: "lower" };
+  const baseForm = rampFormOf(groundRamp, plate && plate.rampForm);
+  const form = resolveLowerRampForm(baseForm, lowerForm || (plate && plate.lowerRampForm) || "auto");
+  const tr = rampTransitions(plate, "lower");
+  if (mode === "same") {
+    return {
+      ...groundRamp,
+      form,
+      level: "lower",
+      length: form === "spiral" ? groundRamp.length : minStraightRampLengthLocal(floorHeightOf(plate), tr),
+      width: form === "curve90" || form === "spiral"
+        ? Math.max(groundRamp.width || AISLE, RAMP_CURVE_W)
+        : (groundRamp.width || AISLE),
+    };
+  }
   const edge = oppositeEdge(groundRamp.edge);
   const along = edge === "n" || edge === "s" ? plate.width : plate.depth;
   const t = round1(along - (groundRamp.t || along / 2));
-  const baseForm = rampFormOf(groundRamp);
-  const form = baseForm === "spiral" ? "spiral"
-    : baseForm === "straight" ? "auto"
-      : baseForm === "auto" ? "curve90"
-        : baseForm;
-  const tr = rampTransitions(plate, "lower");
+  // 외곽 회전을 층간에도 쓰면 같은 가장자리 경로를 쓰되, 진입만 반대 변에서 시작
+  const keepSpiralPath = form === "spiral" && baseForm === "spiral";
   return {
     ...groundRamp,
     id: (Number(groundRamp.id) || 1) + 1000,
-    edge,
-    t,
-    placement: "internal",
+    edge: keepSpiralPath ? groundRamp.edge : edge,
+    t: keepSpiralPath ? groundRamp.t : t,
+    placement: form === "spiral" ? (groundRamp.placement || "internal") : "internal",
     form,
     level: "lower",
     inset: AISLE,
     length: minStraightRampLengthLocal(floorHeightOf(plate), tr),
-    width: Math.max(groundRamp.width || AISLE, RAMP_CURVE_W),
+    width: Math.max(groundRamp.width || AISLE, form === "straight" ? AISLE : RAMP_CURVE_W),
   };
 }
 
 export function rampsForLevel(ramps, plate, level, lowerMode = "alternate") {
   const list = (ramps || []).filter(Boolean);
   if (!list.length) return [];
-  if (level <= 0) return list.map((r) => ({ ...r, level: "ground" }));
-  if (lowerMode === "same") return list.map((r) => ({ ...r, level: "lower" }));
-  if (list.every((r) => rampFormOf(r) === "spiral")) {
-    return list.map((r) => ({ ...r, level: "lower", form: "spiral", placement: "internal" }));
+  const mode = lowerMode || (plate && plate.lowerRampMode) || "alternate";
+  const lowerForm = (plate && plate.lowerRampForm) || "auto";
+  if (level <= 0) {
+    return list.map((r) => ({
+      ...r,
+      level: "ground",
+      form: rampFormOf(r, plate && plate.rampForm),
+    }));
   }
-  return list.map((r) => lowerFloorRamp(r, plate, "alternate")).filter(Boolean);
+  if (mode === "same") {
+    return list.map((r) => lowerFloorRamp(r, plate, "same", lowerForm)).filter(Boolean);
+  }
+  return list.map((r) => lowerFloorRamp(r, plate, "alternate", lowerForm)).filter(Boolean);
 }
 
 export function occupancyRamps(ramps, plate, lowerMode = "alternate") {
   const ground = (ramps || []).filter(Boolean);
-  if (lowerMode === "same" || !ground.length) return ground;
-  if (ground.every((r) => rampFormOf(r) === "spiral")) return ground;
-  return ground.concat(ground.map((r) => lowerFloorRamp(r, plate, "alternate")).filter(Boolean));
+  if (!ground.length) return ground;
+  const mode = lowerMode || (plate && plate.lowerRampMode) || "alternate";
+  if (mode === "same") return ground;
+  const lowerForm = (plate && plate.lowerRampForm) || "auto";
+  // 같은 외곽 회전 경로면 자리 중복 — 한 번만 비움
+  const lowers = ground.map((r) => lowerFloorRamp(r, plate, "alternate", lowerForm)).filter(Boolean);
+  const sameSpiral = lowers.every((r, i) => {
+    const g = ground[i];
+    return rampFormOf(g, plate && plate.rampForm) === "spiral"
+      && rampFormOf(r) === "spiral"
+      && r.edge === g.edge;
+  });
+  if (sameSpiral) return ground;
+  return ground.concat(lowers);
 }
 
 /**

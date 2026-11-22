@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=262";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=263";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,7 +6,7 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=262";
+} from "./rampForms.js?v=263";
 
 export {
   lowerFloorRamp,
@@ -14,7 +14,7 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=262";
+} from "./rampForms.js?v=263";
 
 /**
  * 주차장법 시행규칙 제3조·제6조. 확인 2026-11-08. law.go.kr
@@ -1410,7 +1410,14 @@ function layoutCore(input) {
   if (spec.dir === "both") spec.dir = "ccw";
   const baseRamps = (input.ramps || []).map((ramp) => ({ ...ramp }));
   const ramp0 = baseRamps[0] || defaultRamp(plate, spec.rampPlacement);
-  const placed = { ...ramp0, placement: spec.rampPlacement || ramp0.placement || "internal" };
+  const roadEdge = plate.roadEdge || ramp0.edge || "w";
+  const pos = ramp0.pos || (plate.rampPos && plate.rampPos !== "auto" ? plate.rampPos : undefined);
+  const placed = {
+    ...ramp0,
+    edge: ramp0.edge || roadEdge,
+    placement: spec.rampPlacement || ramp0.placement || "internal",
+    ...(pos ? { pos } : {}),
+  };
   const shifted = input.lockRamp
     ? placed
     : placed.placement === "internal"

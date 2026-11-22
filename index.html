@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=262" />
+    <link rel="stylesheet" href="styles.css?v=263" />
     <script type="importmap">
       {
         "imports": {
@@ -332,15 +332,16 @@
 
         <section class="slide" data-slide="5" hidden>
           <h2>램프 형태 · 위치</h2>
-          <p class="slide-lead">왼쪽 큰 평면에서 램프를 끌어 옮기세요.</p>
+          <p class="slide-lead">위치·배치·형태를 고른 뒤, 왼쪽 평면에서 램프를 끌어 미세 조정하세요. 참조 도면처럼 주차 구획 바깥(외부형)에 둘 수 있습니다.</p>
           <div id="reference-notes" class="hint"></div>
           <div class="field">
-          <span class="field-label">램프 위치 <span class="info" tabindex="0" title="램프는 도로에서 바로 들어오므로 도로 접한 변에 둡니다. 자동은 양 끝·가운데를 모두 짜 보고 대수가 가장 많은 곳을 고릅니다. 도로변 3m는 경사 8.5% 이하로 자동 반영.">ⓘ</span></span>
-          <select id="ramp-pos"></select>
+          <span class="field-label">도로변 안 위치 <span class="info" tabindex="0" title="램프는 도로에서 바로 들어오므로 도로 접한 변에 둡니다. 자동은 양 끝·가운데를 모두 짜 보고 대수가 가장 많은 곳을 고릅니다. 도로변 3m는 경사 8.5% 이하로 자동 반영.">ⓘ</span></span>
+          <div class="choice" id="ramp-pos-choice" data-for="ramp-pos" role="group"></div>
+          <select id="ramp-pos" class="choice-source" tabindex="-1" aria-hidden="true"></select>
         </div>
         <p id="ramp-pos-note" class="hint warn"></p>
         <div class="field">
-          <span class="field-label">램프 배치</span>
+          <span class="field-label">램프 배치 <span class="info" tabindex="0" title="내부형: 주차 평면 안에서 내려감. 외부형: 외벽 밖(대지 여유)으로 나와 내려감 — 참조 도면의 외곽 원형 램프에 가깝습니다.">ⓘ</span></span>
           <div class="choice" data-for="ramp-placement" role="group">
             <button type="button" data-value="internal" class="on">내부형</button>
             <button type="button" data-value="external">외부형</button>
@@ -362,7 +363,7 @@
           </select>
         </div>
         <div class="field">
-          <span class="field-label">램프 형태 <span class="info" tabindex="0" title="주차장법 시행규칙 제6조①5: 곡선 내변반경 6m 이상(50대 이하 5m), 곡선 2차로 6.5m, 직선 경사 17%·곡선 14%, 도로변 3m는 직선 8.5%·곡선 7%. 자동은 깊이에 따라 직선/90° 곡선을 고릅니다.">ⓘ</span></span>
+          <span class="field-label">지상 → 지하1층 형태 <span class="info" tabindex="0" title="주차장법 시행규칙 제6조①5: 곡선 내변반경 6m 이상(50대 이하 5m), 곡선 2차로 6.5m, 직선 경사 17%·곡선 14%, 도로변 3m는 직선 8.5%·곡선 7%. 자동은 깊이에 따라 직선/90° 곡선을 고릅니다. 외부형+90° 곡선은 외벽 밖으로 꺾여 내려갑니다.">ⓘ</span></span>
           <div class="choice" data-for="ramp-form" role="group">
             <button type="button" data-value="auto" class="on">자동</button>
             <button type="button" data-value="straight">직선</button>
@@ -377,7 +378,24 @@
           </select>
         </div>
         <div class="field">
-          <span class="field-label">지하 2층+ 경로 <span class="info" tabindex="0" title="지상→B1 램프와 달리, B1→B2 이하는 반대쪽 변 내부 램프로 내려가도록 그립니다. '전 층 동일'은 예전처럼 같은 XY를 반복합니다. 외곽 회전 램프는 같은 가장자리 경로로 연속합니다.">ⓘ</span></span>
+          <span class="field-label">지하2층↓ 형태 <span class="info" tabindex="0" title="B1→B2 이하 층간 램프 형태. «지상과 같음»은 위와 동일, «자동»은 지상 형태에 맞춰 직선↔곡선 등을 고릅니다. 참조 도면처럼 지상 진입과 층간 램프를 다르게 둘 때 쓰세요.">ⓘ</span></span>
+          <div class="choice" data-for="lower-ramp-form" role="group">
+            <button type="button" data-value="auto" class="on">자동</button>
+            <button type="button" data-value="same">지상과 같음</button>
+            <button type="button" data-value="straight">직선</button>
+            <button type="button" data-value="curve90">90° 곡선</button>
+            <button type="button" data-value="spiral">외곽 회전</button>
+          </div>
+          <select id="lower-ramp-form" class="choice-source" tabindex="-1" aria-hidden="true">
+            <option value="auto">자동 (지상에 맞춤)</option>
+            <option value="same">지상과 같음</option>
+            <option value="straight">직선</option>
+            <option value="curve90">90° 곡선</option>
+            <option value="spiral">외곽 회전 (가장자리)</option>
+          </select>
+        </div>
+        <div class="field">
+          <span class="field-label">지하 2층+ 경로 <span class="info" tabindex="0" title="«다른 경로»: B1→B2 이하는 반대쪽 변에 둡니다. «전 층 동일»: 같은 자리(XY)를 반복. 외곽 회전은 같은 가장자리로 연속할 수 있습니다.">ⓘ</span></span>
           <div class="choice" data-for="lower-ramp-mode" role="group">
             <button type="button" data-value="alternate" class="on">다른 경로</button>
             <button type="button" data-value="same">전 층 동일</button>
@@ -605,7 +623,7 @@
         <button type="button" id="wizard-next" class="primary">다음</button>
       </nav>
       <select id="circulation" hidden><option value="ccw" selected>반시계</option></select>
-      <p class="note"><span class="hint">버전 2026-11-22 · r262</span></p>
+      <p class="note"><span class="hint">버전 2026-11-22 · r263</span></p>
     </aside>
     </div>
 
@@ -618,7 +636,7 @@
     <button id="plan-expand-hit" type="button" hidden>expand</button>
     <button id="collapse-plan" type="button" hidden>접기</button>
 
-    <script type="module" src="src/main.js?v=262"></script>
+    <script type="module" src="src/main.js?v=263"></script>
     <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>

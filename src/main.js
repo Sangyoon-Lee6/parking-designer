@@ -1,11 +1,11 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=262";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=262";
-import { drawThumb, mountPlan } from "./plan.js?v=262";
-import { stallRuleTargets } from "./stallTypes.js?v=262";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=262";
-import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=262";
-import { bindContextDialog, closeContext, openContext } from "./context.js?v=262";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=262";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=263";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=263";
+import { drawThumb, mountPlan } from "./plan.js?v=263";
+import { stallRuleTargets } from "./stallTypes.js?v=263";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=263";
+import { lookupZoning, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=263";
+import { bindContextDialog, closeContext, openContext } from "./context.js?v=263";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=263";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -118,40 +118,71 @@ $("open-margin-dialog").addEventListener("click", () => $("margin-dialog").showM
 $("close-margin-dialog").addEventListener("click", () => { $("margin-dialog").close(); render(); });
 $("road-edge").addEventListener("change", () => {
   state.roadEdge = $("road-edge").value;
-  render();
+  if (state.plate) {
+    state.plate = { ...state.plate, roadEdge: state.roadEdge };
+    generatePlate();
+  } else {
+    render();
+  }
 });
 $("ramp-pos").addEventListener("change", () => {
   state.rampPos = $("ramp-pos").value;
-  render();
+  if (state.plate) {
+    state.plate = { ...state.plate, rampPos: state.rampPos };
+    generatePlate();
+  } else {
+    render();
+  }
 });
 
 // 도로 변에 따라 램프 위치 이름을 바꾼다: 남·북 변 → 왼쪽/가운데/오른쪽, 서·동 변 → 아래쪽/가운데/위쪽
 function rampPosOptions(edge) {
   const horizontal = edge === "n" || edge === "s";
   return [
-    ["auto", "자동 (대수 최대)"],
-    ["start", horizontal ? "왼쪽 (서)" : "아래쪽 (남)"],
+    ["auto", "자동"],
+    ["start", horizontal ? "왼쪽" : "아래쪽"],
     ["mid", "가운데"],
-    ["end", horizontal ? "오른쪽 (동)" : "위쪽 (북)"],
+    ["end", horizontal ? "오른쪽" : "위쪽"],
   ];
 }
 
-// 위치마다 램프가 들어가는지 미리 확인해 선택칸에 "(불가: 경사 초과)"처럼 표시한다.
+// 위치마다 램프가 들어가는지 미리 확인해 선택칸·칩에 "(불가)"처럼 표시한다.
 let rampCheckKey = "";
 let rampCheck = {};
 function renderRampPos() {
   const select = $("ramp-pos");
+  const chips = $("ramp-pos-choice");
+  if (!select) return;
   const plate = plateFromState();
   const key = [state.roadEdge, plate.width, plate.depth, plate.spacing, state.floorHeight, state.rampPlacement, plate.legalStalls].join("|");
   if (key !== rampCheckKey) {
     rampCheckKey = key;
     try { rampCheck = rampPositionCheck(plate, state.rampPlacement, state.floorHeight); } catch (error) { rampCheck = {}; }
-    select.innerHTML = rampPosOptions(state.roadEdge).map(([value, label]) => {
+    const opts = rampPosOptions(state.roadEdge);
+    select.innerHTML = opts.map(([value, label]) => {
       const why = rampCheck[value];
       return `<option value="${value}">${label}${why ? ` (불가: ${why})` : ""}</option>`;
     }).join("");
+    if (chips) {
+      chips.innerHTML = opts.map(([value, label]) => {
+        const why = rampCheck[value];
+        const blocked = Boolean(why);
+        return `<button type="button" data-value="${value}"${blocked ? ` title="불가: ${why}"` : ""}>${label}${blocked ? " ·불가" : ""}</button>`;
+      }).join("");
+      chips.querySelectorAll("button[data-value]").forEach((button) => {
+        button.addEventListener("click", () => {
+          select.value = button.dataset.value;
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+      });
+    }
   }
   if (document.activeElement !== select) select.value = state.rampPos;
+  if (chips) {
+    chips.querySelectorAll("button[data-value]").forEach((button) => {
+      button.classList.toggle("on", button.dataset.value === state.rampPos);
+    });
+  }
   const why = rampCheck[state.rampPos];
   const allBlocked = state.rampPlacement === "internal" && ["start", "mid", "end"].every((pos) => rampCheck[pos]);
   const fb = allBlocked ? rampFallback(plate) : null;
@@ -167,7 +198,15 @@ $("ramp-form").addEventListener("change", () => {
   state.rampForm = $("ramp-form").value;
   state.ramps = (state.ramps || []).map((r) => ({ ...r, form: state.rampForm }));
   if (state.plate) {
-    state.plate = { ...state.plate, rampForm: state.rampForm };
+    state.plate = { ...state.plate, rampForm: state.rampForm, lowerRampForm: state.lowerRampForm };
+    generatePlate();
+  }
+  emit();
+});
+$("lower-ramp-form").addEventListener("change", () => {
+  state.lowerRampForm = $("lower-ramp-form").value;
+  if (state.plate) {
+    state.plate = { ...state.plate, lowerRampForm: state.lowerRampForm };
     generatePlate();
   }
   emit();
@@ -175,14 +214,19 @@ $("ramp-form").addEventListener("change", () => {
 $("lower-ramp-mode").addEventListener("change", () => {
   state.lowerRampMode = $("lower-ramp-mode").value;
   if (state.plate) {
-    state.plate = { ...state.plate, lowerRampMode: state.lowerRampMode };
+    state.plate = { ...state.plate, lowerRampMode: state.lowerRampMode, lowerRampForm: state.lowerRampForm };
     generatePlate();
   }
   emit();
 });
 $("ramp-placement").addEventListener("change", () => {
   state.rampPlacement = $("ramp-placement").value;
-  render();
+  if (state.plate) {
+    state.plate = { ...state.plate, rampPlacement: state.rampPlacement };
+    generatePlate();
+  } else {
+    render();
+  }
 });
 $("entrance-mode").addEventListener("change", () => {
   state.entranceMode = $("entrance-mode").value;
@@ -554,7 +598,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=262")
+    sceneMount = import("./scene.js?v=263")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -781,6 +825,9 @@ function render() {
   setIfIdle($("site-margin"), state.siteMargin);
   if (document.activeElement !== $("ramp-placement")) $("ramp-placement").value = state.rampPlacement;
   if (document.activeElement !== $("ramp-form")) $("ramp-form").value = state.rampForm || "auto";
+  if ($("lower-ramp-form") && document.activeElement !== $("lower-ramp-form")) {
+    $("lower-ramp-form").value = state.lowerRampForm || "auto";
+  }
   if (document.activeElement !== $("lower-ramp-mode")) $("lower-ramp-mode").value = state.lowerRampMode || "alternate";
   if (document.activeElement !== $("road-edge")) $("road-edge").value = state.roadEdge;
   renderRampPos();
@@ -822,12 +869,15 @@ function render() {
   if (state.metrics && state.metrics.rampKind) {
     const ramp = state.ramps[0];
     const kind = state.metrics.rampKind;
+    const formName = (f) => (f === "spiral" ? "외곽 회전" : f === "curve90" ? "90° 곡선" : f === "straight" ? "직선" : f === "same" ? "지상과 같음" : "자동");
     const formLabel = state.rampForm === "spiral" || kind === "spiral" ? "외곽 회전"
       : kind === "curved" ? "직선+곡선 90°"
         : "직선";
-    rows.push(["램프", `${formLabel} ${state.metrics.rampTotal || (ramp && ramp.length) || "—"}m`]);
+    rows.push(["지상→B1 램프", `${state.rampPlacement === "external" ? "외부" : "내부"} · ${formLabel} ${state.metrics.rampTotal || (ramp && ramp.length) || "—"}m`]);
     const lowerMode = state.lowerRampMode || "alternate";
-    rows.push(["지하 2층+ 경로", lowerMode === "same" ? "전 층 동일 XY" : (kind === "spiral" ? "같은 외곽 경로" : "반대쪽 변 층간 램프")]);
+    const lowerForm = state.lowerRampForm || "auto";
+    rows.push(["지하2층↓ 형태", formName(lowerForm)]);
+    rows.push(["지하 2층+ 경로", lowerMode === "same" ? "전 층 동일 XY" : (kind === "spiral" && lowerForm === "spiral" ? "같은 외곽 경로" : "반대쪽 변 층간 램프")]);
     if (kind === "straight" && Number.isFinite(state.metrics.rampLowerSlope)) {
       rows.push(["층간 본 경사", `${(state.metrics.rampLowerSlope * 100).toFixed(1)}% (도로변 3m 없음)`]);
     }

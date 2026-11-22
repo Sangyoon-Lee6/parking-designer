@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=262";
+import { calculateDemand, emptyDemand } from "./demand.js?v=263";
 import {
   basementCount,
   clampCore,
@@ -16,7 +16,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=262";
+} from "./layout.js?v=263";
 
 export const state = {
   step: 1,
@@ -53,6 +53,7 @@ export const state = {
   coreSearch: null,
   rampPlacement: "internal",
   rampForm: "auto",
+  lowerRampForm: "auto",
   lowerRampMode: "alternate",
   entranceMode: "separate",
   circulation: "ccw",
@@ -126,6 +127,7 @@ export function plateFromState() {
     rampPos: state.rampPos || "auto",
     rampPlacement: state.rampPlacement,
     rampForm: state.rampForm || "auto",
+    lowerRampForm: state.lowerRampForm || "auto",
     lowerRampMode: state.lowerRampMode || "alternate",
     legalStalls: rules.legalStalls,
     stallRules: rules,
@@ -317,23 +319,32 @@ export function rebuildLayout() {
 }
 
 function seedAccess() {
+  const edge = state.roadEdge || "w";
+  const along = edge === "n" || edge === "s" ? state.plate.width : state.plate.depth;
+  const pos = state.rampPos && state.rampPos !== "auto" ? state.rampPos : undefined;
   if (!state.ramps.length) {
-    const edge = "w";
     state.ramps = [{
       id: state.nextId++,
       edge,
-      t: round1(state.plate.depth / 2),
+      t: round1(along / 2),
       width: state.rampWidth,
       length: defaultRampLength(state.plate, edge),
       placement: state.rampPlacement,
       form: state.rampForm || "auto",
+      ...(pos ? { pos } : {}),
     }];
   } else {
-    state.ramps = state.ramps.map((ramp) => ({
-      ...ramp,
-      placement: state.rampPlacement,
-      form: state.rampForm || ramp.form || "auto",
-    }));
+    state.ramps = state.ramps.map((ramp) => {
+      const next = {
+        ...ramp,
+        edge: edge || ramp.edge,
+        placement: state.rampPlacement,
+        form: state.rampForm || ramp.form || "auto",
+      };
+      if (pos) next.pos = pos;
+      else delete next.pos;
+      return next;
+    });
   }
 }
 
