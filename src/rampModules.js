@@ -429,6 +429,36 @@ export function autoFit(ramp, opts) {
   return { ramp: next, changed: true, fix, plan: slopePlan(next, opts) };
 }
 
+/** 사각형이 eps 안에서 같은지 */
+export function rectsClose(a, b, eps = 0.05) {
+  if (!a || !b) return false;
+  return Math.abs(a.x - b.x) <= eps
+    && Math.abs(a.y - b.y) <= eps
+    && Math.abs(a.w - b.w) <= eps
+    && Math.abs(a.d - b.d) <= eps;
+}
+
+/** analyzeOnPlate 결과로 edge/t/placement를 맞춘다. mixed는 엔진용 internal + mixed 표시. */
+export function applyPlateMeta(ramp, plate, opts = {}) {
+  const site = analyzeOnPlate(ramp, plate, opts);
+  let placement = site.placement;
+  let mixed = false;
+  if (placement === "mixed") {
+    mixed = true;
+    placement = "internal";
+  }
+  const open = site.openings && site.openings[0];
+  const next = {
+    ...ramp,
+    placement,
+    mixed: mixed || undefined,
+    edge: open?.edge != null ? open.edge : (ramp.edge ?? ramp.legacy?.edge),
+    t: open?.t != null ? open.t : (ramp.t ?? ramp.legacy?.t),
+  };
+  if (next.t != null) next.t = r3(next.t);
+  return { ramp: next, site };
+}
+
 /**
  * 예전 램프({edge,t,width,length,placement})를 모듈 사슬로 바꾼다.
  * 외부형: 외벽 밖에서 시작해 외벽으로 들어오는 직선 하나. 내부형 직선: 외벽에서 inset 안쪽에서 시작.

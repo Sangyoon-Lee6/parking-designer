@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=270";
+import { calculateDemand, emptyDemand } from "./demand.js?v=271";
 import {
   basementCount,
   bestLayoutFor,
@@ -12,12 +12,19 @@ import {
   generateVariants,
   intervalsOverlap,
   layoutParking,
+  rampShape,
   referenceCase,
   spaceCoresForTowers,
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=270";
+} from "./layout.js?v=271";
+import {
+  applyPlateMeta,
+  buildChain,
+  migrateLegacy,
+  rectsClose,
+} from "./rampModules.js?v=271";
 
 export const state = {
   step: 1,
@@ -247,6 +254,55 @@ function syncCore() {
   if (state.core && state.coreIndex >= state.cores.length) state.coreIndex = 0;
 }
 
+/**
+ * 램프에 모듈 사슬이 없으면 migrateLegacy로 채운다. 원래 값은 ramp.legacy에 남긴다.
+ * 사슬이 바뀌면 analyzeOnPlate로 edge/t/placement를 맞춘다.
+ */
+export function ensureModules(ramp, plate) {
+  if (!ramp || !plate) return ramp;
+  const legal = Number(plate.legalStalls) || Number(plate.stallRules?.legalStalls) || 0;
+  const floors = Math.max(1, basementCount(
+    Number(state.demand?.required) || legal || 0,
+    Math.max(1, Number(state.metrics?.stalls) || 50),
+  ));
+  let next = ramp;
+  if (!Array.isArray(ramp.modules) || !ramp.modules.length) {
+    let shape = null;
+    try { shape = rampShape(ramp, plate); } catch (e) { shape = null; }
+    next = migrateLegacy(ramp, plate, shape);
+    if (!next.levels) next.levels = floors;
+  }
+  const { ramp: synced } = applyPlateMeta(next, plate, { legalStalls: legal });
+  return synced;
+}
+
+/** 사슬이 legacy를 다시 migrate한 결과와 같으면 true → 엔진·3D는 예전 경로 사용. */
+export function isLegacyEquivalent(ramp, plate) {
+  if (!ramp?.legacy || !plate) return false;
+  if (!Array.isArray(ramp.modules) || !ramp.modules.length) return false;
+  try {
+    let shape = null;
+    try { shape = rampShape(ramp.legacy, plate); } catch (e) { shape = null; }
+    const fresh = migrateLegacy(ramp.legacy, plate, shape);
+    const a = buildChain(ramp);
+    const b = buildChain(fresh);
+    if (a.modules.length !== b.modules.length) return false;
+    if (Math.abs(a.total - b.total) > 0.1) return false;
+    return a.modules.every((m, i) => {
+      const o = b.modules[i];
+      if (m.type !== o.type) return false;
+      return (m.rects || []).every((r, j) => rectsClose(r, o.rects[j], 0.05));
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
+function ensureStateRamps() {
+  if (!state.plate || !state.ramps?.length) return;
+  state.ramps = state.ramps.map((r) => ensureModules(r, state.plate));
+}
+
 function adopt(result, keepObjects) {
   state.stalls = result.stalls;
   state.aisles = result.aisles;
@@ -267,7 +323,7 @@ function adopt(result, keepObjects) {
   if (!keepObjects) {
     state.cores = result.cores;
     state.openings = result.openings;
-    state.ramps = result.ramps;
+    state.ramps = (result.ramps || []).map((r) => ensureModules(r, result.plate || state.plate));
     state.coreIndex = Math.min(state.coreIndex, Math.max(0, state.cores.length - 1));
     syncCore();
   }
@@ -284,6 +340,7 @@ function appendTransferNotes() {
 
 export function refreshVariants(quick = false) {
   if (!state.plate) return;
+  ensureStateRamps();
   state.variants = generateVariants({
     plate: state.plate,
     cores: state.cores,
@@ -374,9 +431,18 @@ function seedAccess() {
       };
       if (pos) next.pos = pos;
       else delete next.pos;
+      // edge/placement가 바뀌면 사슬을 legacy에서 다시 맞춤
+      if (next.modules && (next.edge !== ramp.edge || next.placement !== ramp.placement)) {
+        delete next.modules;
+        delete next.x;
+        delete next.y;
+        delete next.heading;
+        delete next.legacy;
+      }
       return next;
     });
   }
+  if (state.plate) state.ramps = state.ramps.map((r) => ensureModules(r, state.plate));
 }
 
 export function generatePlate() {
@@ -483,11 +549,11 @@ export function loadReference() {
   state.coreIndex = 0;
   syncCore();
   state.openings = [];
-  state.ramps = [{
+  state.ramps = [ensureModules({
     id: state.nextId++,
     ...sample.ramp,
     placement: "external",
-  }];
+  }, state.plate)];
   state.selection = null;
   refreshVariants();
   const best = Math.max(0, state.variants.findIndex((variant) => variant.recommended));
@@ -850,8 +916,8 @@ export function placeRamp(edge, t) {
     placement: state.rampPlacement,
   }, state.plate);
   ramp.placement = state.rampPlacement;
-  state.ramps.push(ramp);
-  if (state.entranceMode === "integrated") syncIntegrated(ramp);
+  state.ramps.push(ensureModules(ramp, state.plate));
+  if (state.entranceMode === "integrated") syncIntegrated(state.ramps[state.ramps.length - 1]);
   state.selection = { type: "ramp", id: ramp.id };
   rebuildLayout();
   emit();
@@ -860,13 +926,29 @@ export function placeRamp(edge, t) {
 export function moveRamp(id, edge, t) {
   const index = state.ramps.findIndex((item) => item.id === id);
   if (index < 0) return;
-  state.ramps[index] = clampOpening({
-    ...state.ramps[index],
-    edge,
-    t,
-    placement: state.rampPlacement,
-  }, state.plate);
-  state.ramps[index].placement = state.rampPlacement;
+  // 사슬 램프(이미 모듈 편집됨)는 예전 edge 끌기가 아니라 시작점 평행 이동으로 바꾼다(프롬프트 4).
+  const cur = state.ramps[index];
+  if (cur.modules && cur.legacy && !isLegacyEquivalent(cur, state.plate)) {
+    // 변 끌기는 아직 legacy 동기화만: edge/t를 바꾼 뒤 다시 migrate
+    const base = { ...cur.legacy, edge, t, width: cur.width, length: cur.length, placement: state.rampPlacement };
+    state.ramps[index] = ensureModules(base, state.plate);
+  } else {
+    const next = clampOpening({
+      ...cur,
+      edge,
+      t,
+      placement: state.rampPlacement,
+    }, state.plate);
+    next.placement = state.rampPlacement;
+    // edge/t가 바뀌면 사슬을 legacy에서 다시 만든다
+    if (next.modules) {
+      delete next.modules;
+      delete next.x;
+      delete next.y;
+      delete next.heading;
+    }
+    state.ramps[index] = ensureModules(next, state.plate);
+  }
   if (state.entranceMode === "integrated") syncIntegrated(state.ramps[index]);
   state.selection = { type: "ramp", id };
   rebuildLayout();
@@ -912,9 +994,17 @@ export function updateRampSize(partial) {
   const selected = selectedRamp() || state.ramps[0];
   if (selected) {
     const index = state.ramps.findIndex((item) => item.id === selected.id);
-    state.ramps[index] = clampOpening({ ...selected, ...partial, placement: state.rampPlacement }, state.plate);
-    state.ramps[index].placement = state.rampPlacement;
-    state.rampLength = state.ramps[index].length;
+    const merged = clampOpening({ ...selected, ...partial, placement: state.rampPlacement }, state.plate);
+    merged.placement = state.rampPlacement;
+    if (partial.length != null || partial.width != null) {
+      // 길이·폭 변경 시 legacy 기준으로 사슬을 다시 맞춘다
+      const base = { ...(merged.legacy || merged), ...partial, edge: merged.edge, t: merged.t, placement: merged.placement };
+      delete base.modules;
+      state.ramps[index] = ensureModules(base, state.plate);
+    } else {
+      state.ramps[index] = ensureModules(merged, state.plate);
+    }
+    state.rampLength = state.ramps[index].length || state.ramps[index].modules?.[0]?.length || state.rampLength;
     if (state.entranceMode === "integrated") syncIntegrated(state.ramps[index]);
     rebuildLayout();
   }

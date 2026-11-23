@@ -1,5 +1,5 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=270";
-import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=270";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=271";
+import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=271";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";

@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=270";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=271";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,8 +6,8 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=270";
-import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=270";
+} from "./rampForms.js?v=271";
+import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=271";
 
 export {
   lowerFloorRamp,
@@ -15,8 +15,8 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=270";
-export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=270";
+} from "./rampForms.js?v=271";
+export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=271";
 
 /**
  * 주차장법 시행규칙 제3조·제6조. 확인 2026-11-08. law.go.kr

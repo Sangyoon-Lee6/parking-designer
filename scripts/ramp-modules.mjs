@@ -23,7 +23,7 @@ const cases = [
 
 import * as R from "../src/rampModules.js";
 
-const L = await import("../src/layout.js?v=270");
+const L = await import("../src/layout.js?v=271");
 const out = [];
 const opts = { floorHeight: plate.floorHeight, legalStalls: plate.legalStalls };
 let fails = 0;
@@ -77,5 +77,57 @@ for (const old of [
   const same = ["x", "y", "w", "d"].every((k) => Math.abs(fp[k] - box[k]) < 0.01);
   expect(same, `${old.edge} 외부형: 기존 ${JSON.stringify(fp)} / 새 ${JSON.stringify(box)}`);
 }
+// migrateLegacy 재적용 시 동일 사슬(ensureModules/isLegacyEquivalent와 같은 판정)
+console.log("\n[E] migrateLegacy 재적용 동등성");
+const samples = [
+  { id: 1, edge: "w", t: 10, width: 6, length: 21.4, placement: "external" },
+  { id: 1, edge: "s", t: 30, width: 6, length: 21.4, placement: "external" },
+  { id: 1, edge: "w", t: 20, width: 6, length: 21.4, placement: "internal", inset: 11.2 },
+];
+for (const old of samples) {
+  let shape = null;
+  try { shape = L.rampShape(old, plate); } catch (e) { shape = null; }
+  const m = R.migrateLegacy(old, plate, shape);
+  const again = R.migrateLegacy(m.legacy, plate, shape);
+  const a = R.buildChain(m);
+  const b = R.buildChain(again);
+  expect(a.modules.length === b.modules.length && Math.abs(a.total - b.total) < 0.05, `${old.edge}/${old.placement} 재적용 동등`);
+}
+
+// ensureModules → isLegacyEquivalent (sweep 입력 램프와 같은 형태)
+console.log("\n[L] ensureModules / isLegacyEquivalent");
+const { ensureModules, isLegacyEquivalent } = await import("../src/state.js?v=271");
+const len112 = L.minStraightRampLength(3.2, L.rampTransitions({ legalStalls: 112 }));
+const sweepLike = [];
+for (const edge of ["w", "e", "s", "n"]) {
+  for (const placement of ["external", "internal"]) {
+    sweepLike.push({
+      id: 1, edge, t: 10, width: 6, length: len112, placement,
+      ...(placement === "internal" ? { inset: 11.2 } : {}),
+    });
+  }
+}
+// report 기준 사례 외부 램프
+const ref = L.referenceCase;
+const reportPlate = {
+  width: ref.width, depth: ref.depth, spacing: ref.spacing,
+  columnWidth: ref.columnWidth, columnDepth: ref.columnDepth, minClear: ref.minClear,
+  siteMargin: ref.siteMargin, floorHeight: 3.2, legalStalls: 112, roadEdge: ref.ramp.edge,
+  stallRules: { disabled: true, disabledRate: 0.03, legalStalls: 112 },
+};
+const reportRamp = { id: 1, ...ref.ramp, placement: "external" };
+sweepLike.push(reportRamp);
+for (const old of sweepLike) {
+  const p = old === reportRamp ? reportPlate : {
+    width: 48, depth: 42, spacing: 8.1, columnWidth: 0.5, columnDepth: 0.5,
+    minClear: 0, siteMargin: 20, floorHeight: 3.2, legalStalls: 112, roadEdge: old.edge,
+    stallRules: { disabled: true, disabledRate: 0.03, legalStalls: 112 },
+  };
+  const label = old === reportRamp ? "reference/external" : `${old.edge}/${old.placement}`;
+  const m = ensureModules({ ...old }, p);
+  expect(!!m.modules?.length && !!m.legacy, `${label} modules+legacy`);
+  expect(isLegacyEquivalent(m, p), `${label} isLegacyEquivalent`);
+}
+
 console.log(`\n실패 ${fails}개`);
 process.exitCode = fails ? 1 : 0;
