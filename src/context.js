@@ -8,6 +8,7 @@ import {
   WMTS,
   WMS_URL,
   ZONE_COLOR_ZOOM,
+  ESRI_IMAGERY_URL,
   boxAround,
   boxSize,
   buildingHeight,
@@ -22,7 +23,7 @@ import {
   vworldDomain,
   vworldKey,
   zoneWmsLayers,
-} from "./zoning.js?v=265";
+} from "./zoning.js?v=266";
 
 const $ = (id) => document.getElementById(id);
 const MAX_SIDE = 1000;   // 영역 한 변 최대(m). 브이월드가 레이어당 1,000개까지만 준다.
@@ -88,7 +89,8 @@ function tileBackground(model, view, pxWidth) {
   const x0 = lon2x(b.w); const x1 = lon2x(b.e);
   const y0 = lat2y(b.n); const y1 = lat2y(b.s);
   if ((x1 - x0 + 1) * (y1 - y0 + 1) > 150) return "";
-  const url = WMTS("Base");
+  // 브이월드 타일이 막히면 OSM.de로 2D 배경을 깐다
+  const url = OSM_URL();
   const out = [];
   for (let x = x0; x <= x1; x += 1) {
     for (let y = y0; y <= y1; y += 1) {
@@ -476,17 +478,31 @@ function ensureMap() {
   const opts = { maxZoom: 20, maxNativeZoom: 19, minZoom: 6, referrerPolicy: "no-referrer", attribution: "© 브이월드(국토교통부)" };
   const base = L.tileLayer(WMTS("Base"), opts);
   const sat = L.tileLayer(WMTS("Satellite"), opts);
+  // OSM.de: 브이월드·OSM.org 403·Carto 키요구 때도 키가 필요 없는 배경
   const osm = L.tileLayer(OSM_URL(), {
-    maxZoom: 20,
-    attribution: "© OpenStreetMap",
+    maxZoom: 19,
+    attribution: "© OpenStreetMap contributors",
   });
-  // 브이월드 타일이 안 뜨면 OSM이 보이도록 둘 다 올릴 수 있게 — 기본은 일반지도
-  base.addTo(map);
+  const esriSat = L.tileLayer(ESRI_IMAGERY_URL(), {
+    maxZoom: 19,
+    attribution: "Tiles © Esri",
+  });
+  osm.addTo(map);
+  let vworldBroken = false;
   base.on("tileerror", () => {
+    if (vworldBroken) return;
+    vworldBroken = true;
+    if (map.hasLayer(base)) map.removeLayer(base);
     if (!map.hasLayer(osm)) osm.addTo(map);
   });
+  sat.on("tileerror", () => {
+    if (map.hasLayer(sat)) map.removeLayer(sat);
+    if (!map.hasLayer(esriSat)) esriSat.addTo(map);
+  });
+  // 브이월드가 살아 있으면 위에 덮어 한국 지적 느낌 유지
+  base.addTo(map);
   L.control.layers(
-    { "일반지도": base, "위성사진": sat, "OSM": osm },
+    { "일반지도": osm, "브이월드": base, "위성(ESRI)": esriSat, "위성(브이월드)": sat },
     null,
     { position: "topright" },
   ).addTo(map);

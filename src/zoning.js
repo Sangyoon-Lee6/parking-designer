@@ -37,7 +37,7 @@ function serviceDomain() {
   return SERVICE_DOMAIN;
 }
 
-function jsonp(url, timeoutMs = 16000) {
+function jsonp(url, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
     const cb = `_vworld_cb_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
     let settled = false;
@@ -85,9 +85,19 @@ export function WMTS(layer = "Base") {
   return `https://xdworld.vworld.kr/2d/${map}/service/{z}/{x}/{y}.png`;
 }
 
-/** OpenStreetMap 타일 (브이월드 장애 시 배경) */
+/**
+ * 배경 지도 타일 (브이월드 장애·차단 시).
+ * - tile.openstreetmap.org 는 데이터센터에서 403
+ * - Carto 무료 타일은 API KEY REQUIRED 워터마크
+ * → OSM Germany 미러 사용 (키 없음)
+ */
 export function OSM_URL() {
-  return "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+  return "https://tile.openstreetmap.de/{z}/{x}/{y}.png";
+}
+
+/** ESRI 월드 이미지(위성) — 브이월드 위성 장애 시 */
+export function ESRI_IMAGERY_URL() {
+  return "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 }
 
 /** 용도지역 WMS가 보이기 시작하는 줌 (부동산·토지이음 앱과 비슷하게 필지 스케일) */
@@ -249,16 +259,49 @@ async function nominatimFetch(url) {
   return res.json();
 }
 
+function notFoundError(msg = "주소를 찾지 못했습니다") {
+  const err = new Error(msg);
+  err.notFound = true;
+  return err;
+}
+
+/** Photon(Komoot) — 브라우저 CORS 허용, 브이월드·Nominatim 장애 시 좌표 폴백 */
+async function photonSearch(address) {
+  const q = encodeURIComponent(String(address || "").trim());
+  const url = `https://photon.komoot.io/api/?q=${q}&limit=1&lang=ko`;
+  const data = await fetchJson(url);
+  const hit = Array.isArray(data?.features) ? data.features[0] : null;
+  if (!hit || !hit.geometry || !hit.geometry.coordinates) throw notFoundError();
+  const [lon, lat] = hit.geometry.coordinates;
+  const p = hit.properties || {};
+  const label = [p.name, p.housenumber, p.street, p.district, p.city || p.county, p.state, p.country]
+    .filter(Boolean)
+    .join(" ")
+    || address;
+  return {
+    address: label,
+    point: { x: Number(lon), y: Number(lat) },
+    source: "photon",
+  };
+}
+
+async function photonReverse(x, y) {
+  const url = `https://photon.komoot.io/reverse?lon=${encodeURIComponent(x)}&lat=${encodeURIComponent(y)}&lang=ko`;
+  const data = await fetchJson(url);
+  const hit = Array.isArray(data?.features) ? data.features[0] : null;
+  const p = hit?.properties || {};
+  const label = [p.name, p.housenumber, p.street, p.district, p.city || p.county, p.state, p.country]
+    .filter(Boolean)
+    .join(" ");
+  return label || null;
+}
+
 async function nominatimSearch(address) {
   const q = encodeURIComponent(String(address || "").trim());
   const url = `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&addressdetails=1&countrycodes=kr`;
   const list = await nominatimFetch(url);
   const hit = Array.isArray(list) ? list[0] : null;
-  if (!hit) {
-    const err = new Error("주소를 찾지 못했습니다");
-    err.notFound = true;
-    throw err;
-  }
+  if (!hit) throw notFoundError();
   return {
     address: hit.display_name || address,
     point: { x: Number(hit.lon), y: Number(hit.lat) },
@@ -267,13 +310,37 @@ async function nominatimSearch(address) {
 }
 
 export async function reverseGeocode(x, y) {
-  const url = `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(y)}&lon=${encodeURIComponent(x)}&format=json&addressdetails=1&zoom=18`;
+  const fallback = `${Number(y).toFixed(5)}, ${Number(x).toFixed(5)}`;
   try {
+    const photon = await photonReverse(x, y);
+    if (photon) return photon;
+  } catch (_) { /* continue */ }
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(y)}&lon=${encodeURIComponent(x)}&format=json&addressdetails=1&zoom=18`;
     const data = await nominatimFetch(url);
-    return data?.display_name || `${Number(y).toFixed(5)}, ${Number(x).toFixed(5)}`;
+    return data?.display_name || fallback;
   } catch (_) {
-    return `${Number(y).toFixed(5)}, ${Number(x).toFixed(5)}`;
+    return fallback;
   }
+}
+
+async function geocodeFallbacks(address) {
+  // 브라우저: Photon(CORS *) 우선. Node: Nominatim도 가능.
+  const order = typeof document !== "undefined"
+    ? [photonSearch, nominatimSearch]
+    : [nominatimSearch, photonSearch];
+  let lastNotFound = null;
+  let lastErr = null;
+  for (const fn of order) {
+    try {
+      return await fn(address);
+    } catch (err) {
+      if (err && err.notFound) lastNotFound = err;
+      else lastErr = err;
+    }
+  }
+  if (lastNotFound) throw lastNotFound;
+  throw lastErr || notFoundError();
 }
 
 async function geocodeAddress(address) {
@@ -299,16 +366,14 @@ async function geocodeAddress(address) {
       last = err;
     }
   }
-  // 브이월드 장애·키 문제 시 OpenStreetMap(Nominatim)으로 좌표만 확보 (부동산 앱도 동일하게 좌표→용도지역)
+  // 브이월드 장애·키 문제 시 Photon/Nominatim으로 좌표만 확보
   try {
-    return await nominatimSearch(address);
+    return await geocodeFallbacks(address);
   } catch (nomErr) {
     if (nomErr && nomErr.notFound) throw nomErr;
     if (last && last.response) {
       const msg = last.response?.error?.text || last.response?.status || "주소를 찾지 못했습니다";
-      const error = new Error(msg);
-      error.notFound = true;
-      throw error;
+      throw notFoundError(msg);
     }
     throw last instanceof Error ? last : nomErr;
   }
@@ -386,7 +451,7 @@ export async function lookupZoning(address) {
       zones,
       limits: packZones(zones),
       notFound: false,
-      offline: zones.length === 0 && geo.source === "nominatim",
+      offline: zones.length === 0 && geo.source !== "vworld",
       eumUrl: eumLandUrl(geo.point.x, geo.point.y),
       source: geo.source || "vworld",
     };

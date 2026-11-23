@@ -1,11 +1,11 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=265";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=265";
-import { drawThumb, mountPlan } from "./plan.js?v=265";
-import { stallRuleTargets } from "./stallTypes.js?v=265";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=265";
-import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=265";
-import { bindContextDialog, closeContext, openContext, openSitePicker, updatePickerMarker } from "./context.js?v=265";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=265";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=266";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=266";
+import { drawThumb, mountPlan } from "./plan.js?v=266";
+import { stallRuleTargets } from "./stallTypes.js?v=266";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=266";
+import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=266";
+import { bindContextDialog, closeContext, openContext, openSitePicker, updatePickerMarker } from "./context.js?v=266";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=266";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -614,7 +614,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=265")
+    sceneMount = import("./scene.js?v=266")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -1215,6 +1215,9 @@ function buildDemandForm() {
     box.hidden = false;
     state.demand.siteAddress = r.address;
     state.demand.siteZones = r.zones || [];
+    if (r.point && Number.isFinite(r.point.x) && Number.isFinite(r.point.y)) {
+      state.demand.sitePoint = { x: r.point.x, y: r.point.y };
+    }
     if (r.address) $("site-address").value = r.address;
     const region = regionFromAddress(r.address);
     if (region) {
@@ -1266,7 +1269,9 @@ function buildDemandForm() {
     const accessLine = access && access.sides && access.sides.length
       ? `<p>도로 접면: ${access.sides.map((sd) => `<b>${sd.label}</b> 약 ${sd.len}m`).join(" · ")}</p>`
       : "";
-    const src = r.source === "nominatim" ? "OpenStreetMap" : r.source === "map" ? "지도 선택" : "브이월드";
+    const src = r.source === "nominatim" || r.source === "photon"
+      ? "OpenStreetMap"
+      : r.source === "map" ? "지도 선택" : "브이월드";
     box.className = "zone-result";
     box.innerHTML = `<p>${r.address} <span class="hint">(${src})</span></p><ul>${lines}</ul>${multi}${areaLine}${accessLine}`
       + `<p class="note">건폐율·용적률은 국토계획법 시행령 상한입니다. 실제 값은 시·군 조례로 더 낮을 수 있습니다.</p>${eumLine}`
