@@ -3,6 +3,12 @@
 AI(Claude)와 함께 확인·수정한 내용입니다. 각 항목은 문제 → 원인 → 수정 → 확인 순서로 적었습니다.
 점검은 `node scripts/report.mjs`(기존 회귀 점검)와 `node scripts/stall-types.mjs`(이번 추가 점검)로 했습니다.
 
+## v275 — DXF 내보내기 · 다각형 평면
+
+- **DXF** 결과 평면도 아래 «CAD 파일로 내보내기(DXF)» (AC1015 ASCII, 단위 m/mm·전 층 옵션). `src/dxfExport.js` 무의존, 레이어 PD-*, 한글 `\U+`·malgun.ttf. `scripts/dxf-export.mjs` 검사.
+- **다각형 평면** 3단계 탭(사각형/그리기/좌표)·프리셋(L·ㄷ·사다리꼴·모서리 깎기)·대지 이격 오프셋. `state.plate.polygon`, 엔진은 외접 사각형 + outside blockRects + `rectInsidePolygon`. 2D/3D/도면/DXF 반영.
+- **한계** 사선 변과 평행한 주차 줄 후보는 다음 단계. 캐시 `?v=275`.
+
 ## v241–v247 — 단지형(여러 동 + 지하주차장 1개)
 
 - **v241** 코어끼리 겹침·6m 미만 간격 검사, `pushOutOf`가 이미 둔 코어를 피함, `scripts/multi-building.mjs` 추가.
@@ -19,7 +25,7 @@ AI(Claude)와 함께 확인·수정한 내용입니다. 각 항목은 문제 →
 - **v261** 단지형 배치 붕괴 수정: 기본 동 외곽 22×14, 타워 footprint 기준 코어 이격, 3동 최소 평면 98×66, 겹친 타워 자동 분리. (기존 30×14+80×58은 타워가 겹쳐 차로·주차가 조각나고 56대·82㎡/대 수준으로 망가짐 → 128대·50㎡/대). 캐시 `?v=261`.
 - **v274** 모듈 램프 3D(`addModuleRamp`·`rampMesh`)·도면 모듈 경사·문서.
 - **v273** 램프 단계: 사슬 끌기·회전·모듈 추가/삭제·자동 맞춤·경사 색 표시.
-- **v272** 모듈 사슬 램프를 배치 엔진에 연결: `plate.keepClear`, `analyzeOnPlate().block` 장애물, 단지형 loopFirst 진입. 예전 램프 대수 유지(report V4 141). 캐시 `?v=274`.
+- **v272** 모듈 사슬 램프를 배치 엔진에 연결: `plate.keepClear`, `analyzeOnPlate().block` 장애물, 단지형 loopFirst 진입. 예전 램프 대수 유지(report V4 141). 캐시 `?v=275`.
 - **v271** 모듈형 램프 상태 연동(ensureModules·isLegacyEquivalent). 예전 램프는 사슬로 옮기되 엔진은 legacy 경로 유지.
 - **v270** 모듈형 램프 계산 `src/rampModules.js` + `scripts/ramp-modules.mjs` (ramp-plan 프롬프트 1). 시험 실패 0.
 - **v269** 단지형 «차로 먼저» 엔진 연결·속도.

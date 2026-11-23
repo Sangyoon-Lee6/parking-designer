@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=274";
+import { calculateDemand, emptyDemand } from "./demand.js?v=275";
 import {
   basementCount,
   bestLayoutFor,
@@ -19,7 +19,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=274";
+} from "./layout.js?v=275";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -33,7 +33,16 @@ import {
   slopePlan,
   analyzeOnPlate,
   buildChain,
-} from "./rampModules.js?v=274";
+} from "./rampModules.js?v=275";
+import {
+  normalizePolygon,
+  outsideBlockRects,
+  isRectangularPlate,
+  plateDimsFromPolygon,
+  polygonFromPlate,
+  rectPolygon,
+  validatePolygon,
+} from "./polygon.js?v=275";
 
 export const state = {
   step: 1,
@@ -45,6 +54,11 @@ export const state = {
   buildings: [],
   parkWidth: 48,
   parkDepth: 42,
+  /** "rect" | "draw" | "coords" */
+  plateShapeMode: "rect",
+  /** 반시계 다각형(m). null이면 사각형 parkWidth×parkDepth */
+  parkPolygon: null,
+  platePolyError: "",
   columnSpacing: 8.1,
   columnWidth: 0.5,
   columnDepth: 0.5,
@@ -125,9 +139,30 @@ export function plateFromState() {
   const rules = currentStallRules();
   const spansX = parseSpans(state.spansX);
   const spansY = parseSpans(state.spansY);
+  let width = round1(state.parkWidth);
+  let depth = round1(state.parkDepth);
+  let polygon = null;
+  state.platePolyError = "";
+  if (state.parkPolygon && state.parkPolygon.length >= 3) {
+    const errs = validatePolygon(state.parkPolygon);
+    if (errs.length) {
+      state.platePolyError = errs.join(" ");
+      polygon = normalizePolygon(state.parkPolygon);
+    } else {
+      const dims = plateDimsFromPolygon(state.parkPolygon);
+      polygon = dims.polygon;
+      width = dims.width;
+      depth = dims.depth;
+      state.parkWidth = width;
+      state.parkDepth = depth;
+    }
+  } else {
+    polygon = rectPolygon(width, depth);
+  }
   const plate = {
-    width: round1(state.parkWidth),
-    depth: round1(state.parkDepth),
+    width,
+    depth,
+    polygon,
     spacing: round1(state.columnSpacing),
     columnWidth: round1(state.columnWidth),
     columnDepth: round1(state.columnDepth),
@@ -149,11 +184,47 @@ export function plateFromState() {
     legalStalls: rules.legalStalls,
     stallRules: rules,
   };
+  // 비사각형 다각형만 밖 막힘 영역 추가 (사각형은 기존과 동일)
+  let blocks = [];
+  if (polygon && polygon.length >= 3 && !isRectangularPlate(polygon, width, depth)) {
+    blocks = outsideBlockRects(polygon, 2);
+  }
   if (state.siteType === "complex" && state.buildings.length) {
     plate.buildings = state.buildings;
-    plate.blockRects = towerBlockRects(state.buildings, state.cores, plate);
+    blocks = blocks.concat(towerBlockRects(state.buildings, state.cores, plate));
   }
+  if (blocks.length) plate.blockRects = blocks;
   return plate;
+}
+
+export function setParkPolygon(poly, { silent = false } = {}) {
+  const norm = normalizePolygon(poly);
+  if (!norm) {
+    state.parkPolygon = null;
+    state.platePolyError = "다각형이 비어 있습니다.";
+    if (!silent) emit();
+    return false;
+  }
+  const errs = validatePolygon(norm);
+  state.platePolyError = errs.join(" ");
+  if (errs.length) {
+    state.parkPolygon = norm; // 편집 중 표시는 유지
+    if (!silent) emit();
+    return false;
+  }
+  const dims = plateDimsFromPolygon(norm);
+  state.parkPolygon = dims.polygon;
+  state.parkWidth = dims.width;
+  state.parkDepth = dims.depth;
+  if (!silent) emit();
+  return true;
+}
+
+export function clearParkPolygon() {
+  state.parkPolygon = null;
+  state.platePolyError = "";
+  state.plateShapeMode = "rect";
+  emit();
 }
 
 /** "4, 5, 6" → 숫자 배열. 비우면 null(기존 단일 간격). 3~15m 밖이면 error */

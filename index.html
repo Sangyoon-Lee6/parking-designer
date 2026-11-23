@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=274" />
+    <link rel="stylesheet" href="styles.css?v=275" />
     <script type="importmap">
       {
         "imports": {
@@ -187,7 +187,13 @@
           <p class="slide-lead">주차장 규모와 층고를 정합니다.</p>
           <button type="button" id="suggest-size" class="ghost tiny">법정 대수로 크기 추천</button>
         <p class="hint" id="suggest-note"></p>
-          <p class="section-label">주차장 크기</p>
+          <p class="section-label">주차장 크기 · 형태</p>
+        <div class="choice compact" id="plate-shape-tabs" role="group" aria-label="평면 형태">
+          <button type="button" data-shape="rect" class="on">사각형</button>
+          <button type="button" data-shape="draw">그리기</button>
+          <button type="button" data-shape="coords">좌표 입력</button>
+        </div>
+        <div id="plate-rect-fields">
         <div class="choice compact" id="size-presets" role="group" aria-label="크기 프리셋">
           <button type="button" data-w="48" data-d="42">48×42</button>
           <button type="button" data-w="60" data-d="50">60×50</button>
@@ -204,6 +210,26 @@
             <input id="park-depth" type="number" min="18" step="0.1" value="42" />
           </label>
         </div>
+        </div>
+        <div id="plate-draw-fields" hidden>
+          <p class="hint">왼쪽(또는 확대) 평면에 클릭으로 꼭짓점을 찍으세요. 더블클릭·첫 점 클릭으로 닫고, Shift=직각, 0.5m 격자. 변 중간 클릭=점 추가, 우클릭/Delete=삭제.</p>
+          <p id="plate-draw-stats" class="hint"></p>
+          <div class="split" style="flex-wrap:wrap;gap:0.35rem">
+            <button type="button" id="plate-preset-l" class="ghost tiny">L자</button>
+            <button type="button" id="plate-preset-u" class="ghost tiny">ㄷ자</button>
+            <button type="button" id="plate-preset-trap" class="ghost tiny">사다리꼴</button>
+            <button type="button" id="plate-preset-chamfer" class="ghost tiny">모서리 깎기</button>
+            <label class="tiny">깎기(m)<input id="plate-chamfer-m" type="number" min="1" step="0.5" value="6" style="width:4rem" /></label>
+            <button type="button" id="plate-from-parcel" class="ghost tiny">대지 경계에서 이격만큼 안쪽으로</button>
+            <button type="button" id="plate-clear-poly" class="ghost tiny">다각형 지우기</button>
+          </div>
+        </div>
+        <div id="plate-coords-fields" hidden>
+          <p class="hint">꼭짓점 (x, y) m — 엑셀에서 붙여넣기 가능(탭/쉼표 구분). 반시계, 닫힘점 중복 없이.</p>
+          <textarea id="plate-coords" rows="6" placeholder="0,0&#10;48,0&#10;48,42&#10;0,42"></textarea>
+          <button type="button" id="plate-coords-apply" class="ghost tiny">좌표 적용</button>
+        </div>
+        <p id="plate-poly-error" class="error issue-box" hidden></p>
         <div class="split column-row">
           <label>
             기둥 간격 (m) <span class="info" tabindex="0" title="기둥 중심 간격. 8.1m·기둥 0.5m면 기둥 사이 7.6m에 2.5m 칸 3대(확장형 2.6m 1대 포함 가능).">ⓘ</span>
@@ -653,6 +679,16 @@
             <button id="sheet-svg" type="button" class="ghost">SVG</button>
             <button id="sheet-print" type="button" class="ghost">A3 인쇄</button>
           </div>
+          <div id="dxf-tools" class="split" hidden style="flex-wrap:wrap;gap:0.4rem;align-items:center;margin:0.35rem 0">
+            <button id="sheet-dxf" type="button" class="ghost">CAD 파일로 내보내기(DXF)</button>
+            <label class="tiny">단위
+              <select id="dxf-unit">
+                <option value="mm" selected>mm</option>
+                <option value="m">m</option>
+              </select>
+            </label>
+            <label class="check tiny"><input id="dxf-all-floors" type="checkbox" /> 전 층 내보내기</label>
+          </div>
           <button id="to-3d" type="button" class="primary" hidden>결과 보기</button>
           <button id="back-plan" type="button" class="ghost">코어 단계로</button>
           <button id="reset-camera" type="button" class="ghost">카메라 초기화</button>
@@ -667,7 +703,7 @@
         <button type="button" id="wizard-next" class="primary">다음</button>
       </nav>
       <select id="circulation" hidden><option value="ccw" selected>반시계</option></select>
-      <p class="note"><span class="hint">버전 2026-11-22 · r274</span></p>
+      <p class="note"><span class="hint">버전 2026-11-23 · r275</span></p>
     </aside>
     </div>
 
@@ -680,7 +716,7 @@
     <button id="plan-expand-hit" type="button" hidden>expand</button>
     <button id="collapse-plan" type="button" hidden>접기</button>
 
-    <script type="module" src="src/main.js?v=274"></script>
+    <script type="module" src="src/main.js?v=275"></script>
     <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>

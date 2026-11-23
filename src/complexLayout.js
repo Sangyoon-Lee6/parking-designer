@@ -4,7 +4,8 @@
  * layout.js와 순환 import를 피하려고 상수·겹침 계산은 여기에 둔다.
  * 근거·목표: docs/redesign/redesign-plan.md
  */
-import { assignStallTypes, stallRuleTargets, tallyStallTypes } from "./stallTypes.js?v=274";
+import { assignStallTypes, stallRuleTargets, tallyStallTypes } from "./stallTypes.js?v=275";
+import { polygonFromPlate, rectInsidePolygon, isRectangularPlate } from "./polygon.js?v=275";
 
 const AISLE = 6;
 const STALL_W = 2.5;
@@ -843,7 +844,7 @@ export function layoutLoopFirst(input, spec = {}) {
   const Sd = stallDepthOf(plate0);
   const spacing = plate0.spacing || 8.1;
   const towers = working.towers;
-  const cores = working.cores;
+  let cores = working.cores;
   const ramp = working.ramp;
   const keepClear = working.keepClear;
 
@@ -1028,10 +1029,21 @@ export function layoutLoopFirst(input, spec = {}) {
   if (keepClear.length) {
     stalls = stalls.filter((s) => !keepClear.some((z) => overlapArea(s, z) > 0.05));
   }
+  const platePoly = polygonFromPlate(plate0);
+  const nonRect = !isRectangularPlate(platePoly, plate0.width, plate0.depth);
+  if (nonRect) {
+    stalls = stalls.filter((s) => rectInsidePolygon(s, platePoly));
+    columns = columns.filter((c) => rectInsidePolygon(c, platePoly));
+    aisles = aisles.filter((a) => rectInsidePolygon(a, platePoly));
+    cores = cores.filter((c) => rectInsidePolygon(c, platePoly));
+  }
   const typed = assignTypes(stalls, plate0, cores, towers, ramp);
   stalls = typed.stalls;
   if (keepClear.length) {
     stalls = stalls.filter((s) => !keepClear.some((z) => overlapArea(s, z) > 0.05));
+  }
+  if (nonRect) {
+    stalls = stalls.filter((s) => rectInsidePolygon(s, platePoly));
   }
   const counts = typed.counts || tallyStallTypes(stalls, typed.targets).counts;
   const targets = typed.targets;

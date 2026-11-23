@@ -1,5 +1,6 @@
-import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint, siteMarginsOf } from "./layout.js?v=274";
-import { buildChain, slopePlan } from "./rampModules.js?v=274";
+import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint, siteMarginsOf } from "./layout.js?v=275";
+import { buildChain, slopePlan } from "./rampModules.js?v=275";
+import { polygonFromPlate } from "./polygon.js?v=275";
 
 const EDGE = { n: "북", e: "동", s: "남", w: "서" };
 
@@ -76,7 +77,16 @@ export function renderSheet(paint, state, info, floorIndex) {
     paint.text(xOf(plate.width / 2) - 28, yOf(-siteM.s / 2) + 4, `이격 남 ${siteM.s}m`, 11, "#475569");
     paint.text(xOf(plate.width / 2) - 28, yOf(plate.depth + siteM.n / 2) + 4, `이격 북 ${siteM.n}m`, 11, "#475569");
   }
-  paint.strokeRect(xOf(0), yOf(plate.depth), plate.width * scale, plate.depth * scale, "#111", 2.2);
+  {
+    const poly = polygonFromPlate(plate);
+    // sheet yOf flips Y — stroke polygon manually
+    const pts = poly.map((p) => ({ x: xOf(p.x), y: yOf(p.y) }));
+    for (let i = 0; i < pts.length; i += 1) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      paint.line(a.x, a.y, b.x, b.y, "#111", 2.2);
+    }
+  }
 
   const xs = state.gridX?.length ? state.gridX : uniqueSorted([0, plate.width]);
   const ys = state.gridY?.length ? state.gridY : uniqueSorted([0, plate.depth]);

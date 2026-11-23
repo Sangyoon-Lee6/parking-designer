@@ -1,11 +1,14 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=274";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=275";
 import {
   analyzeOnPlate, buildChain, slopePlan, usesModuleLayout,
-} from "./rampModules.js?v=274";
+} from "./rampModules.js?v=275";
 import {
-  moveOpening, moveRamp, moveRampFree, placeOpening, placeRamp,
-  selectCore, selectItem, state, subscribe, updateCore,
-} from "./state.js?v=274";
+  polygonFromPlate, snapPoint, edgeLengths, polygonArea,
+} from "./polygon.js?v=275";
+import {
+  emit, moveOpening, moveRamp, moveRampFree, placeOpening, placeRamp,
+  selectCore, selectItem, setParkPolygon, state, subscribe, updateCore,
+} from "./state.js?v=275";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -79,8 +82,12 @@ export function mountPlan(canvas) {
 
   const paint = (ctx) => {
     const plate = state.plate;
+    const poly = polygonFromPlate(plate);
     ctx.fillStyle = "#fbfaf7";
-    ctx.fillRect(0, 0, plate.width, plate.depth);
+    ctx.beginPath();
+    poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.fill();
 
     drawOverlay(ctx, plate);
     drawSite(ctx, plate);
@@ -209,8 +216,30 @@ export function mountPlan(canvas) {
     ctx.strokeStyle = "#1e1a16";
     ctx.lineWidth = 2 / camera.scale;
     if (external) ctx.setLineDash([0.6, 0.45]);
-    ctx.strokeRect(0, 0, plate.width, plate.depth);
+    ctx.beginPath();
+    poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.stroke();
     ctx.restore();
+    // 편집 중 꼭짓점·변 길이
+    if ((state.plateShapeMode === "draw" || state.tool === "platePoly") && (state.parkPolygon || poly)) {
+      const edit = state.parkPolygon || poly;
+      const lens = edgeLengths(edit);
+      edit.forEach((p, i) => {
+        ctx.fillStyle = state.selection?.type === "plateVertex" && state.selection.index === i ? "#b42318" : "#1e1a16";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 0.35, 0, Math.PI * 2);
+        ctx.fill();
+        const b = edit[(i + 1) % edit.length];
+        const mx = (p.x + b.x) / 2;
+        const my = (p.y + b.y) / 2;
+        label(ctx, `${lens[i].toFixed(1)}m`, mx, my, "#475569");
+      });
+      if (edit.length >= 3) {
+        label(ctx, `${polygonArea(edit).toFixed(0)}㎡`, edit.reduce((s, p) => s + p.x, 0) / edit.length,
+          edit.reduce((s, p) => s + p.y, 0) / edit.length, "#1e1a16");
+      }
+    }
 
     const blockedOpenings = new Set(state.issues.filter((issue) => issue.type === "opening").map((issue) => issue.id));
     state.openings.forEach((opening) => {
@@ -239,6 +268,76 @@ export function mountPlan(canvas) {
       selectItem({ type: "opening", id: opening.id });
       drag = { mode: "opening", id: opening.id };
       canvas.setPointerCapture(event.pointerId);
+      return;
+    }
+
+    // 다각형 편집
+    if (state.tool === "platePoly" || state.plateShapeMode === "draw") {
+      const poly = (state.parkPolygon || []).slice();
+      const hitV = poly.findIndex((p) => Math.hypot(p.x - world.x, p.y - world.y) < 0.6);
+      if (event.button === 2 && hitV >= 0) {
+        if (poly.length > 3) {
+          poly.splice(hitV, 1);
+          setParkPolygon(poly);
+        }
+        return;
+      }
+      if (hitV >= 0) {
+        selectItem({ type: "plateVertex", index: hitV });
+        drag = { mode: "plateVertex", index: hitV };
+        canvas.setPointerCapture(event.pointerId);
+        return;
+      }
+      // 변 길이 라벨(중점) 클릭 → 숫자 수정
+      for (let i = 0; i < poly.length; i += 1) {
+        const a = poly[i];
+        const b = poly[(i + 1) % poly.length];
+        const mx = (a.x + b.x) / 2;
+        const my = (a.y + b.y) / 2;
+        if (Math.hypot(world.x - mx, world.y - my) < 0.75) {
+          const curL = Math.hypot(b.x - a.x, b.y - a.y);
+          const raw = window.prompt(`변 ${i + 1} 길이 (m)`, curL.toFixed(1));
+          const nextL = Number(raw);
+          if (Number.isFinite(nextL) && nextL >= 6) {
+            const ux = (b.x - a.x) / (curL || 1);
+            const uy = (b.y - a.y) / (curL || 1);
+            const j = (i + 1) % poly.length;
+            poly[j] = { x: a.x + ux * nextL, y: a.y + uy * nextL };
+            setParkPolygon(poly);
+          }
+          return;
+        }
+      }
+      // 변 중간 → 점 추가
+      let insertAt = -1;
+      for (let i = 0; i < poly.length; i += 1) {
+        const a = poly[i];
+        const b = poly[(i + 1) % poly.length];
+        const t = nearestOnSeg(world, a, b);
+        if (t.dist < 0.45 && t.u > 0.15 && t.u < 0.85) { insertAt = i + 1; break; }
+      }
+      if (insertAt >= 0) {
+        const pt = snapPoint(world, 0.5, event.shiftKey && poly[insertAt - 1] ? poly[insertAt - 1] : null);
+        poly.splice(insertAt, 0, pt);
+        setParkPolygon(poly);
+        selectItem({ type: "plateVertex", index: insertAt });
+        return;
+      }
+      // 새 점 추가(미닫힘 편집)
+      if (event.detail >= 2 && poly.length >= 3) {
+        setParkPolygon(poly);
+        return;
+      }
+      const pt = snapPoint(world, 0.5, event.shiftKey && poly.length ? poly[poly.length - 1] : null);
+      if (poly.length >= 3 && Math.hypot(pt.x - poly[0].x, pt.y - poly[0].y) < 0.6) {
+        setParkPolygon(poly);
+        return;
+      }
+      poly.push(pt);
+      state.parkPolygon = poly;
+      state.platePolyError = "";
+      selectItem({ type: "plateVertex", index: poly.length - 1 });
+      emit();
       return;
     }
 
@@ -291,6 +390,15 @@ export function mountPlan(canvas) {
       if (!current) return;
       moveOpening(drag.id, edge ? edge.edge : current.edge, edge ? edge.t : projectAlong(current.edge, world));
     }
+    if (drag.mode === "plateVertex") {
+      const poly = (state.parkPolygon || []).slice();
+      if (!poly[drag.index]) return;
+      const prev = poly[(drag.index - 1 + poly.length) % poly.length];
+      poly[drag.index] = snapPoint(world, 0.5, event.shiftKey ? prev : null);
+      state.parkPolygon = poly;
+      emit();
+      return;
+    }
     if (drag.mode === "rampFree") {
       moveRampFree(drag.id, world.x - drag.ox, world.y - drag.oy, { live: true });
       return;
@@ -307,7 +415,33 @@ export function mountPlan(canvas) {
       const cur = state.ramps.find((item) => item.id === drag.id);
       if (cur) moveRampFree(drag.id, cur.x, cur.y, { live: false });
     }
+    if (drag?.mode === "plateVertex" && state.parkPolygon?.length >= 3) {
+      setParkPolygon(state.parkPolygon);
+    }
     drag = null;
+  });
+
+  function nearestOnSeg(p, a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const L2 = dx * dx + dy * dy || 1;
+    const u = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2));
+    const x = a.x + u * dx;
+    const y = a.y + u * dy;
+    return { u, dist: Math.hypot(p.x - x, p.y - y), x, y };
+  }
+
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Delete" && event.key !== "Backspace") return;
+    if (state.selection?.type !== "plateVertex") return;
+    const poly = (state.parkPolygon || []).slice();
+    const idx = state.selection.index;
+    if (poly.length > 3 && idx >= 0 && idx < poly.length) {
+      event.preventDefault();
+      poly.splice(idx, 1);
+      setParkPolygon(poly);
+      selectItem(null);
+    }
   });
 
   canvas.addEventListener("wheel", (event) => {
@@ -726,20 +860,17 @@ function drawSite(ctx, plate) {
     siteMargins: plate.siteMargins || state.siteMargins,
   });
   if (!(m.n > 0 || m.s > 0 || m.e > 0 || m.w > 0)) return;
-  const x0 = -m.w;
-  const y0 = -m.s;
-  const x1 = plate.width + m.e;
-  const y1 = plate.depth + m.n;
+  const poly = polygonFromPlate(plate);
+  const maxM = Math.max(m.n, m.s, m.e, m.w);
   ctx.save();
   ctx.strokeStyle = "#64748b";
   ctx.fillStyle = "#64748b";
   ctx.lineWidth = 1.4 / camera.scale;
   ctx.setLineDash([1.8, 1.2]);
   ctx.beginPath();
-  ctx.moveTo(x0, y0);
-  ctx.lineTo(x1, y0);
-  ctx.lineTo(x1, y1);
-  ctx.lineTo(x0, y1);
+  // 다각형 외곽 오프셋(균일 max). 방향별 이격은 라벨로 표기.
+  const outward = offsetOutwardApprox(poly, maxM);
+  outward.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
   ctx.closePath();
   ctx.stroke();
   ctx.setLineDash([]);
@@ -764,11 +895,43 @@ function drawSite(ctx, plate) {
     ctx.fillText(`이격 ${fmtM(m.e)}`, 0, 0);
     ctx.restore();
   }
-  // 주차장 외벽(실선)과 구분
+  // 주차장 외벽(실선)과 구분 — 다각형
   ctx.strokeStyle = "#1e293b";
   ctx.lineWidth = 2 / camera.scale;
-  ctx.strokeRect(0, 0, plate.width, plate.depth);
+  ctx.beginPath();
+  poly.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.closePath();
+  ctx.stroke();
   ctx.restore();
+}
+
+/** 균일 바깥 오프셋(마이터). 실패 시 bbox 확장. */
+function offsetOutwardApprox(poly, dist) {
+  if (!(dist > 0) || !poly?.length) return poly || [];
+  const n = poly.length;
+  const out = [];
+  for (let i = 0; i < n; i += 1) {
+    const prev = poly[(i - 1 + n) % n];
+    const cur = poly[i];
+    const next = poly[(i + 1) % n];
+    const e1 = { x: cur.x - prev.x, y: cur.y - prev.y };
+    const e2 = { x: next.x - cur.x, y: next.y - cur.y };
+    const L1 = Math.hypot(e1.x, e1.y) || 1;
+    const L2 = Math.hypot(e2.x, e2.y) || 1;
+    // CCW 오른쪽 = 바깥
+    const n1 = { x: e1.y / L1, y: -e1.x / L1 };
+    const n2 = { x: e2.y / L2, y: -e2.x / L2 };
+    const bis = { x: n1.x + n2.x, y: n1.y + n2.y };
+    const bl = Math.hypot(bis.x, bis.y);
+    if (bl < 1e-6) {
+      out.push({ x: cur.x + n1.x * dist, y: cur.y + n1.y * dist });
+      continue;
+    }
+    const dot = Math.max(-0.999, Math.min(0.999, (n1.x * bis.x + n1.y * bis.y) / bl));
+    const scale = dist / Math.max(0.2, dot);
+    out.push({ x: cur.x + (bis.x / bl) * scale, y: cur.y + (bis.y / bl) * scale });
+  }
+  return out;
 }
 
 function fmtM(v) {

@@ -1,11 +1,16 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=274";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=274";
-import { drawThumb, mountPlan } from "./plan.js?v=274";
-import { stallRuleTargets } from "./stallTypes.js?v=274";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=274";
-import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=274";
-import { bindContextDialog, closeContext, openContext, openSitePicker, updatePickerMarker } from "./context.js?v=274";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, rampModuleInfo, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=274";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=275";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=275";
+import { drawThumb, mountPlan } from "./plan.js?v=275";
+import { stallRuleTargets } from "./stallTypes.js?v=275";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=275";
+import { buildDxf, downloadDxf, dxfFilename } from "./dxfExport.js?v=275";
+import {
+  plateDimsFromPolygon, presetChamferRect, presetL, presetTrapezoid, presetU,
+  rectPolygon, validatePolygon, normalizePolygon, offsetPolygon, polygonArea, edgeLengths,
+} from "./polygon.js?v=275";
+import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=275";
+import { bindContextDialog, closeContext, openContext, openSitePicker, updatePickerMarker } from "./context.js?v=275";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, rampModuleInfo, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=275";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -396,8 +401,105 @@ $("size-presets")?.querySelectorAll("button[data-w]").forEach((button) => {
   button.addEventListener("click", () => {
     state.parkWidth = Number(button.dataset.w);
     state.parkDepth = Number(button.dataset.d);
+    state.parkPolygon = null;
+    state.plateShapeMode = "rect";
     render();
   });
+});
+
+function syncPlateShapeTabs() {
+  const mode = state.plateShapeMode || "rect";
+  $("plate-shape-tabs")?.querySelectorAll("button[data-shape]").forEach((b) => {
+    b.classList.toggle("on", b.dataset.shape === mode);
+  });
+  if ($("plate-rect-fields")) $("plate-rect-fields").hidden = mode !== "rect";
+  if ($("plate-draw-fields")) $("plate-draw-fields").hidden = mode !== "draw";
+  if ($("plate-coords-fields")) $("plate-coords-fields").hidden = mode !== "coords";
+  const err = $("plate-poly-error");
+  if (err) {
+    err.hidden = !state.platePolyError;
+    err.textContent = state.platePolyError || "";
+  }
+  const stats = $("plate-draw-stats");
+  if (stats && state.parkPolygon?.length) {
+    const lens = edgeLengths(state.parkPolygon).map((L) => L.toFixed(1)).join(" · ");
+    stats.textContent = `꼭짓점 ${state.parkPolygon.length} · 면적 ${polygonArea(state.parkPolygon).toFixed(1)}㎡ · 변 ${lens}m`;
+  } else if (stats) stats.textContent = "";
+  if (mode === "coords" && $("plate-coords") && document.activeElement !== $("plate-coords")) {
+    const poly = state.parkPolygon || rectPolygon(state.parkWidth, state.parkDepth);
+    $("plate-coords").value = poly.map((p) => `${p.x},${p.y}`).join("\n");
+  }
+}
+
+$("plate-shape-tabs")?.querySelectorAll("button[data-shape]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.plateShapeMode = button.dataset.shape;
+    if (state.plateShapeMode === "rect") {
+      state.parkPolygon = null;
+      state.platePolyError = "";
+    } else if (!state.parkPolygon?.length) {
+      state.parkPolygon = rectPolygon(state.parkWidth, state.parkDepth);
+    }
+    if (state.plateShapeMode === "draw") state.tool = "platePoly";
+    render();
+  });
+});
+$("plate-preset-l")?.addEventListener("click", () => {
+  setParkPolygon(presetL(60, 40, 20, 20));
+  state.plateShapeMode = "draw";
+  render();
+});
+$("plate-preset-u")?.addEventListener("click", () => {
+  setParkPolygon(presetU(60, 40, 12, 20));
+  state.plateShapeMode = "draw";
+  render();
+});
+$("plate-preset-trap")?.addEventListener("click", () => {
+  setParkPolygon(presetTrapezoid(60, 40, 8));
+  state.plateShapeMode = "draw";
+  render();
+});
+$("plate-preset-chamfer")?.addEventListener("click", () => {
+  const m = Number($("plate-chamfer-m")?.value) || 6;
+  setParkPolygon(presetChamferRect(state.parkWidth || 48, state.parkDepth || 42, m));
+  state.plateShapeMode = "draw";
+  render();
+});
+$("plate-clear-poly")?.addEventListener("click", () => {
+  clearParkPolygon();
+  render();
+});
+$("plate-coords-apply")?.addEventListener("click", () => {
+  const raw = $("plate-coords")?.value || "";
+  const pts = raw.trim().split(/\n+/).map((line) => {
+    const parts = line.trim().split(/[\s,，\t]+/).filter(Boolean);
+    return { x: Number(parts[0]), y: Number(parts[1]) };
+  }).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  setParkPolygon(pts);
+  render();
+});
+$("plate-from-parcel")?.addEventListener("click", () => {
+  const parcel = state.siteParcel || state.parcelPolygon;
+  if (!parcel?.length) {
+    state.platePolyError = "지도에서 대지 경계가 없습니다. 주소·필지를 먼저 조회하세요.";
+    render();
+    return;
+  }
+  const m = Math.max(
+    Number(state.siteMargins?.n) || state.siteMargin || 0,
+    Number(state.siteMargins?.s) || state.siteMargin || 0,
+    Number(state.siteMargins?.e) || state.siteMargin || 0,
+    Number(state.siteMargins?.w) || state.siteMargin || 0,
+  ) || 3;
+  const inset = offsetPolygon(parcel, m);
+  if (!inset) {
+    state.platePolyError = "이격 오프셋에 실패했습니다. 대지 형태가 너무 오목이거나 이격이 큽니다.";
+    render();
+    return;
+  }
+  setParkPolygon(inset);
+  state.plateShapeMode = "draw";
+  render();
 });
 
 $("floor-height-choice")?.querySelectorAll("button[data-value]").forEach((button) => {
@@ -598,6 +700,19 @@ $("sheet-svg").addEventListener("click", () => {
   downloadBlob("parking-plan.svg", new Blob([svg], { type: "image/svg+xml" }));
 });
 $("sheet-print").addEventListener("click", () => printSheet($("sheet")));
+$("sheet-dxf")?.addEventListener("click", () => {
+  if (!state.plate) return;
+  const info = summary();
+  const unit = $("dxf-unit")?.value === "m" ? "m" : "mm";
+  const allFloors = Boolean($("dxf-all-floors")?.checked);
+  const { dxf } = buildDxf(state, { ...info, checkedOn: info.demand?.checkedOn || info.checkedOn }, {
+    unit,
+    floorIndex: sheetFloor(),
+    allFloors,
+    version: "r275",
+  });
+  downloadDxf(dxfFilename(state, sheetFloor(), allFloors), dxf);
+});
 $("floor-picker").addEventListener("click", (event) => {
   const floor = event.target.dataset.floor;
   if (!floor) return;
@@ -648,7 +763,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=274")
+    sceneMount = import("./scene.js?v=275")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -814,10 +929,12 @@ function render() {
   $("scene-view").hidden = !showModel;
   $("sheet-view").hidden = !showSheet;
   $("sheet-tools").hidden = !showSheet;
+  if ($("dxf-tools")) $("dxf-tools").hidden = !showSheet;
   $("reset-camera").hidden = showSheet || !showModel;
   if ($("tab-plan")) $("tab-plan").classList.toggle("on", !showSheet && !showModel);
   if ($("tab-model")) $("tab-model").classList.toggle("on", showModel);
   if ($("tab-sheet")) $("tab-sheet").classList.toggle("on", showSheet);
+  syncPlateShapeTabs();
 
   const valid = inputsValid();
   $("generate").disabled = !valid;

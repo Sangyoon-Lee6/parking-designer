@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=274";
-import { analyzeOnPlate, rampMesh, slopePlan } from "./rampModules.js?v=274";
-import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=274";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=275";
+import { analyzeOnPlate, rampMesh, slopePlan } from "./rampModules.js?v=275";
+import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=275";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -231,11 +231,11 @@ function standard(color, roughness, map) {
 
 function addSlab(plate, base, material) {
   const shape = new THREE.Shape();
-  shape.moveTo(0, 0);
-  shape.lineTo(plate.width, 0);
-  shape.lineTo(plate.width, plate.depth);
-  shape.lineTo(0, plate.depth);
-  shape.lineTo(0, 0);
+  const poly = (plate.polygon && plate.polygon.length >= 3)
+    ? plate.polygon
+    : [{ x: 0, y: 0 }, { x: plate.width, y: 0 }, { x: plate.width, y: plate.depth }, { x: 0, y: plate.depth }];
+  poly.forEach((p, i) => (i ? shape.lineTo(p.x, p.y) : shape.moveTo(p.x, p.y)));
+  shape.lineTo(poly[0].x, poly[0].y);
   rampHoles(plate).forEach((hole) => {
     const path = new THREE.Path();
     path.moveTo(hole.x, hole.y);
@@ -509,6 +509,36 @@ function addSiteSetback(base) {
 
 function addWalls(material, base) {
   const plate = state.plate;
+  const poly = (plate.polygon && plate.polygon.length >= 3)
+    ? plate.polygon
+    : null;
+  const isRect = !poly || (poly.length === 4
+    && Math.abs(poly[0].x) < 1e-6 && Math.abs(poly[0].y) < 1e-6
+    && Math.abs(poly[2].x - plate.width) < 1e-6 && Math.abs(poly[2].y - plate.depth) < 1e-6);
+  if (!isRect && poly) {
+    // 다각형 외벽: 각 변을 얇은 박스로 근사(개구 절단은 사각형 평면에서만)
+    for (let i = 0; i < poly.length; i += 1) {
+      const a = poly[i];
+      const b = poly[(i + 1) % poly.length];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 0.05) continue;
+      const cx = (a.x + b.x) / 2;
+      const cz = (a.y + b.y) / 2;
+      const ang = Math.atan2(dy, dx);
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(len, 1.15, 0.24),
+        material,
+      );
+      mesh.position.set(cx, base + 1.15 / 2, cz);
+      mesh.rotation.y = -ang;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      host.add(mesh);
+    }
+    return;
+  }
   const cuts = { s: [], n: [], w: [], e: [] };
   state.openings.concat(state.ramps).forEach((item) => {
     cuts[item.edge].push({ start: item.t - item.width / 2, end: item.t + item.width / 2 });

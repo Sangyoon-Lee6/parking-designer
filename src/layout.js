@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=274";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=275";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,14 +6,22 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=274";
-import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=274";
+} from "./rampForms.js?v=275";
+import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=275";
 import {
   analyzeOnPlate,
   slopePlan,
   usesModuleLayout,
   buildChain,
-} from "./rampModules.js?v=274";
+} from "./rampModules.js?v=275";
+import {
+  polygonFromPlate,
+  rectPolygon,
+  rectInsidePolygon,
+  outsideBlockRects,
+  isRectangularPlate,
+  insetPolygon,
+} from "./polygon.js?v=275";
 
 export {
   lowerFloorRamp,
@@ -21,8 +29,8 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=274";
-export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=274";
+} from "./rampForms.js?v=275";
+export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=275";
 
 /** 모듈 사슬 램프의 평면 분석(legacy 동등이면 null). */
 function moduleSiteOf(ramp, plate, blocks = []) {
@@ -2310,6 +2318,19 @@ function layoutCore(input) {
     typed.targets = retarget.targets;
     typed.shortages = retarget.shortages;
   }
+  // 다각형 평면(비사각형): 칸·기둥·차로·코어가 완전 포함될 때만 남긴다
+  const platePoly = plate.polygon?.length >= 3 ? plate.polygon : null;
+  const polyActive = platePoly && !isRectangularPlate(platePoly, plate.width, plate.depth);
+  if (polyActive) {
+    typedStalls = typedStalls.filter((stall) => rectInsidePolygon(stall, platePoly));
+    for (let i = columns.length - 1; i >= 0; i -= 1) {
+      if (!rectInsidePolygon(columns[i], platePoly)) columns.splice(i, 1);
+    }
+    aisles = aisles.filter((a) => rectInsidePolygon(a, platePoly));
+    for (let i = cores.length - 1; i >= 0; i -= 1) {
+      if (!rectInsidePolygon(cores[i], platePoly)) cores.splice(i, 1);
+    }
+  }
   const tally = tallyStallTypes(typedStalls, typeRules);
   typed.counts = tally.counts;
   typed.targets = tally.targets;
@@ -2468,10 +2489,18 @@ function resolveEntrance(mode, current) {
 }
 
 function normalizePlate(plate) {
+  const polygon = plate.polygon?.length >= 3 ? plate.polygon : polygonFromPlate(plate);
+  let blockRects = plate.blockRects ? plate.blockRects.slice() : [];
+  // 다각형이 사각형이 아니면 밖 영역을 blockRects에 합친다(이미 있으면 중복 추가 방지)
+  const isRect = isRectangularPlate(polygon, plate.width, plate.depth);
+  if (!isRect && polygon.length >= 3 && !blockRects.some((b) => b.role === "outside")) {
+    blockRects = blockRects.concat(outsideBlockRects(polygon, 2));
+  }
   return {
     inner: !!plate.inner,
     moduleGrid: plate.moduleGrid,
-    blockRects: plate.blockRects,
+    blockRects,
+    polygon,
     buildings: plate.buildings || null,
     extraAisles: plate.extraAisles,
     wallColumns: plate.wallColumns,
@@ -2491,6 +2520,7 @@ function normalizePlate(plate) {
     trimDeadEnds: plate.trimDeadEnds !== false,
     floorHeight: floorHeightOf(plate),
     legalStalls: Number(plate.legalStalls) || (plate.stallRules && Number(plate.stallRules.legalStalls)) || 0,
+    keepClear: plate.keepClear || null,
   };
 }
 
@@ -4155,7 +4185,26 @@ export function edgeGap(plate) {
 
 function innerPlateOf(plate, c) {
   const shift = (v) => (Array.isArray(v) ? v : v);
-  return { ...plate, inner: true, width: round3(plate.width - 2 * c), depth: round3(plate.depth - 2 * c), spansX: shift(plate.spansX), spansY: shift(plate.spansY) };
+  const next = {
+    ...plate,
+    inner: true,
+    width: round3(plate.width - 2 * c),
+    depth: round3(plate.depth - 2 * c),
+    spansX: shift(plate.spansX),
+    spansY: shift(plate.spansY),
+  };
+  // 다각형도 안쪽 평면으로 맞춤(외곽 다각형을 그대로 두면 isRect 판정·필터가 깨짐)
+  if (plate.polygon?.length >= 3) {
+    if (isRectangularPlate(plate.polygon, plate.width, plate.depth)) {
+      next.polygon = rectPolygon(next.width, next.depth);
+    } else {
+      const inset = insetPolygon(plate.polygon, c);
+      next.polygon = inset && inset.length >= 3
+        ? inset
+        : plate.polygon.map((p) => ({ x: round3(p.x - c), y: round3(p.y - c) }));
+    }
+  }
+  return next;
 }
 
 function withGap(ramp, plate, raw) {
@@ -4241,8 +4290,29 @@ function layoutWithGap(input) {
     : (res.plate.blockRects || []).map((b) => ({ ...b, x: round3(b.x + c), y: round3(b.y + c) }));
   const outerKeep = Array.isArray(raw.keepClear) ? raw.keepClear.slice()
     : (res.plate.keepClear || []).map((b) => ({ ...b, x: round3(b.x + c), y: round3(b.y + c) }));
-  out.plate = { ...res.plate, inner: false, width: raw.width, depth: raw.depth, edgeGap: c, blockRects: outerBlocks, keepClear: outerKeep, buildings: raw.buildings || res.plate.buildings };
+  const restoredPoly = raw.polygon?.length >= 3
+    ? raw.polygon
+    : rectPolygon(raw.width, raw.depth);
+  out.plate = {
+    ...res.plate,
+    inner: false,
+    width: raw.width,
+    depth: raw.depth,
+    edgeGap: c,
+    blockRects: outerBlocks,
+    keepClear: outerKeep,
+    buildings: raw.buildings || res.plate.buildings,
+    polygon: restoredPoly,
+  };
   out.keepClear = outerKeep;
+  // gap 복원 후 — 비사각형 다각형만 밖 기둥·칸 재필터
+  if (raw.polygon?.length >= 3 && !isRectangularPlate(raw.polygon, raw.width, raw.depth)) {
+    out.columns = (out.columns || []).filter((col) => rectInsidePolygon(col, raw.polygon));
+    out.stalls = (out.stalls || []).filter((s) => rectInsidePolygon(s, raw.polygon));
+    out.aisles = (out.aisles || []).filter((a) => rectInsidePolygon(a, raw.polygon));
+    out.stalls.forEach((s, i) => { s.no = i + 1; });
+    if (out.metrics) out.metrics.stalls = out.stalls.length;
+  }
   // ㎡/대·차로비는 진짜 평면 넓이 기준으로
   const f = (raw.width * raw.depth) / (plate.width * plate.depth);
   if (res.metrics) out.metrics = { ...res.metrics, areaPerStall: round2m(res.metrics.areaPerStall * f), aisleRatio: round3(res.metrics.aisleRatio / f) };

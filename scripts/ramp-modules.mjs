@@ -23,7 +23,7 @@ const cases = [
 
 import * as R from "../src/rampModules.js";
 
-const L = await import("../src/layout.js?v=274");
+const L = await import("../src/layout.js?v=275");
 const out = [];
 const opts = { floorHeight: plate.floorHeight, legalStalls: plate.legalStalls };
 let fails = 0;
@@ -96,7 +96,7 @@ for (const old of samples) {
 
 // ensureModules → isLegacyEquivalent (sweep 입력 램프와 같은 형태)
 console.log("\n[L] ensureModules / isLegacyEquivalent");
-const { ensureModules, isLegacyEquivalent } = await import("../src/state.js?v=274");
+const { ensureModules, isLegacyEquivalent } = await import("../src/state.js?v=275");
 const len112 = L.minStraightRampLength(3.2, L.rampTransitions({ legalStalls: 112 }));
 const sweepLike = [];
 for (const edge of ["w", "e", "s", "n"]) {

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>polygon shots</title>
+  <style>
+    body { margin: 0; font: 14px sans-serif; background: #1e1a16; color: #f5f0e8; }
+    canvas { display: block; background: #fbfaf7; margin: 8px; border: 1px solid #ccc; }
+    h2 { margin: 12px 16px 4px; }
+  </style>
+</head>
+<body>
+  <h2 id="t1">L자 평면 2D</h2>
+  <canvas id="c1" width="900" height="620"></canvas>
+  <h2 id="t2">모서리 깎기 2D</h2>
+  <canvas id="c2" width="900" height="620"></canvas>
+  <pre id="log"></pre>
+  <script type="module">
+    import { layoutParking, referenceCase, minStraightRampLength, rampTransitions, defaultCore } from "../src/layout.js?v=275";
+    import { presetL, presetChamferRect, polygonArea } from "../src/polygon.js?v=275";
+
+    const log = (m) => { document.getElementById("log").textContent += m + "\n"; };
+
+    function paint(canvas, res, title) {
+      const ctx = canvas.getContext("2d");
+      const plate = res.plate;
+      const pad = 40;
+      const scale = Math.min((canvas.width - pad * 2) / plate.width, (canvas.height - pad * 2) / plate.depth);
+      const ox = pad;
+      const oy = canvas.height - pad;
+      const X = (x) => ox + x * scale;
+      const Y = (y) => oy - y * scale;
+      ctx.fillStyle = "#fbfaf7";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const poly = plate.polygon;
+      ctx.beginPath();
+      poly.forEach((p, i) => (i ? ctx.lineTo(X(p.x), Y(p.y)) : ctx.moveTo(X(p.x), Y(p.y))));
+      ctx.closePath();
+      ctx.fillStyle = "#eadcc4";
+      ctx.fill();
+      ctx.strokeStyle = "#1e1a16";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = "#d6c4a3";
+      (res.aisles || []).forEach((a) => ctx.fillRect(X(a.x), Y(a.y + a.d), a.w * scale, a.d * scale));
+      (res.stalls || []).forEach((s) => {
+        ctx.fillStyle = "#f7f4ee";
+        ctx.strokeStyle = "#8a8478";
+        ctx.lineWidth = 1;
+        ctx.fillRect(X(s.x), Y(s.y + s.d), s.w * scale, s.d * scale);
+        ctx.strokeRect(X(s.x), Y(s.y + s.d), s.w * scale, s.d * scale);
+      });
+      ctx.fillStyle = "#2c2824";
+      (res.columns || []).forEach((c) => ctx.fillRect(X(c.x), Y(c.y + c.d), c.w * scale, c.d * scale));
+      ctx.fillStyle = "rgba(44,74,110,0.35)";
+      (res.cores || []).forEach((c) => {
+        ctx.fillRect(X(c.x), Y(c.y + c.d), c.w * scale, c.d * scale);
+        ctx.strokeStyle = "#2c4a6e";
+        ctx.strokeRect(X(c.x), Y(c.y + c.d), c.w * scale, c.d * scale);
+      });
+      ctx.fillStyle = "#1e1a16";
+      ctx.font = "16px sans-serif";
+      ctx.fillText(`${title} · ${res.stalls.length}대 · ${polygonArea(poly).toFixed(0)}㎡`, 16, 28);
+    }
+
+    function run(poly, legal = 80) {
+      const xs = poly.map((p) => p.x), ys = poly.map((p) => p.y);
+      const width = Math.max(...xs) - Math.min(...xs);
+      const depth = Math.max(...ys) - Math.min(...ys);
+      const sample = referenceCase;
+      const plate = {
+        width, depth, polygon: poly,
+        spacing: sample.spacing, columnWidth: sample.columnWidth, columnDepth: sample.columnDepth,
+        minClear: sample.minClear, siteMargin: sample.siteMargin, floorHeight: 3.2,
+        legalStalls: legal, roadEdge: sample.ramp.edge,
+        stallRules: { disabled: true, disabledRate: 0.03, legalStalls: legal },
+      };
+      const len = minStraightRampLength(3.2, rampTransitions({ legalStalls: legal }));
+      let core = defaultCore(plate);
+      core.x = Math.min(core.x, width - core.w - 1);
+      core.y = Math.min(core.y, depth - core.d - 1);
+      return layoutParking({
+        plate, cores: [core],
+        ramps: [{ id: 1, ...sample.ramp, length: len, placement: "external" }],
+        openings: [], rampPlacement: "external", entranceMode: "integrated",
+      });
+    }
+
+    const L = presetL(60, 40, 20, 20);
+    const C = presetChamferRect(48, 42, 6);
+    const rL = run(L);
+    const rC = run(C);
+    paint(document.getElementById("c1"), rL, "L자 60×40−20×20");
+    paint(document.getElementById("c2"), rC, "모서리 깎기 6m");
+    log(`L stalls=${rL.stalls.length}`);
+    log(`Chamfer stalls=${rC.stalls.length}`);
+    document.title = "ready";
+    window.__SHOT_READY__ = true;
+  </script>
+</body>
+</html>
