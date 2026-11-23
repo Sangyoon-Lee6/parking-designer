@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=272";
+import { calculateDemand, emptyDemand } from "./demand.js?v=274";
 import {
   basementCount,
   bestLayoutFor,
@@ -14,16 +14,26 @@ import {
   layoutParking,
   rampShape,
   referenceCase,
+  siteMarginsOf,
   spaceCoresForTowers,
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=272";
+} from "./layout.js?v=274";
 import {
+  addModule as chainAddModule,
   applyPlateMeta,
+  autoFit as chainAutoFit,
   isLegacyEquivalent as modulesLegacyEq,
   migrateLegacy,
-} from "./rampModules.js?v=272";
+  moveRamp as chainMoveRamp,
+  removeModule as chainRemoveModule,
+  rotateRamp as chainRotateRamp,
+  setLength as chainSetLength,
+  slopePlan,
+  analyzeOnPlate,
+  buildChain,
+} from "./rampModules.js?v=274";
 
 export const state = {
   step: 1,
@@ -938,6 +948,94 @@ export function moveRamp(id, edge, t) {
   state.selection = { type: "ramp", id };
   rebuildLayout();
   emit();
+}
+
+/** 사슬 시작점 평행 이동(0.5m 맞춤). live면 배치 엔진은 돌리지 않고 화면만 갱신. */
+export function moveRampFree(id, x, y, { live = false } = {}) {
+  const index = state.ramps.findIndex((item) => item.id === id);
+  if (index < 0 || !state.plate) return;
+  let cur = ensureModules(state.ramps[index], state.plate);
+  const m = siteMarginsOf(state.plate);
+  const W = state.plate.width;
+  const D = state.plate.depth;
+  const nx = Math.max(-m.w, Math.min(W + m.e, x));
+  const ny = Math.max(-m.s, Math.min(D + m.n, y));
+  cur = chainMoveRamp(cur, nx, ny);
+  const legal = Number(state.plate.legalStalls) || Number(state.demand?.required) || 0;
+  const { ramp: synced } = applyPlateMeta(cur, state.plate, { legalStalls: legal });
+  state.ramps[index] = synced;
+  if (state.entranceMode === "integrated") syncIntegrated(synced);
+  state.selection = { type: "ramp", id, module: state.selection?.module };
+  if (live) emit();
+  else {
+    rebuildLayout();
+    emit();
+  }
+}
+
+export function rotateSelectedRamp(quarter = 1) {
+  const selected = selectedRamp();
+  if (!selected || !state.plate) return;
+  const index = state.ramps.findIndex((item) => item.id === selected.id);
+  let cur = ensureModules(selected, state.plate);
+  cur = chainRotateRamp(cur, quarter);
+  const legal = Number(state.plate.legalStalls) || 0;
+  const { ramp: synced } = applyPlateMeta(cur, state.plate, { legalStalls: legal });
+  state.ramps[index] = synced;
+  if (state.entranceMode === "integrated") syncIntegrated(synced);
+  rebuildLayout();
+  emit();
+}
+
+export function editRampModules(action, payload = {}) {
+  const selected = selectedRamp();
+  if (!selected || !state.plate) return;
+  const index = state.ramps.findIndex((item) => item.id === selected.id);
+  let cur = ensureModules(selected, state.plate);
+  const after = state.selection?.module != null ? state.selection.module : null;
+  if (action === "addStraight") cur = chainAddModule(cur, "straight", null, after);
+  else if (action === "addTurnL") cur = chainAddModule(cur, "turn", "L", after);
+  else if (action === "addTurnR") cur = chainAddModule(cur, "turn", "R", after);
+  else if (action === "remove") {
+    const mi = after != null ? after : (cur.modules.length - 1);
+    cur = chainRemoveModule(cur, mi);
+    if (state.selection) state.selection = { ...state.selection, module: null };
+  } else if (action === "setLength" && after != null) {
+    cur = chainSetLength(cur, after, payload.length);
+  } else if (action === "autoFit") {
+    const legal = Number(state.plate.legalStalls) || Number(state.demand?.required) || 0;
+    const fit = chainAutoFit(cur, { floorHeight: state.floorHeight || state.plate.floorHeight || 3.2, legalStalls: legal });
+    cur = fit.ramp;
+  } else if (action === "setWidth") {
+    cur = { ...cur, width: Number(payload.width) || cur.width };
+  } else if (action === "setRadius") {
+    cur = {
+      ...cur,
+      innerRadius: Number(payload.radius) || cur.innerRadius || 6,
+      modules: (cur.modules || []).map((m) => (m.type === "turn" ? { ...m, radius: Number(payload.radius) || m.radius } : m)),
+    };
+  } else if (action === "setLevels") {
+    cur = { ...cur, levels: Math.max(1, Number(payload.levels) || 1) };
+  } else if (action === "setMode") {
+    cur = { ...cur, mode: payload.mode === "spiral" ? "spiral" : "repeat" };
+  } else return;
+  const legal = Number(state.plate.legalStalls) || Number(state.demand?.required) || 0;
+  const { ramp: synced } = applyPlateMeta(cur, state.plate, { legalStalls: legal });
+  state.ramps[index] = synced;
+  if (state.entranceMode === "integrated") syncIntegrated(synced);
+  rebuildLayout();
+  emit();
+}
+
+export function rampModuleInfo(ramp = selectedRamp()) {
+  if (!ramp || !state.plate) return null;
+  const cur = ensureModules(ramp, state.plate);
+  const legal = Number(state.plate.legalStalls) || Number(state.demand?.required) || 0;
+  const opts = { floorHeight: state.floorHeight || state.plate.floorHeight || 3.2, legalStalls: legal };
+  const plan = slopePlan(cur, opts);
+  const site = analyzeOnPlate(cur, state.plate, { ...opts, blocks: state.plate.blockRects || [] });
+  const chain = buildChain(cur);
+  return { ramp: cur, plan, site, chain, legacyEq: isLegacyEquivalent(cur, state.plate) };
 }
 
 function syncIntegrated(ramp) {

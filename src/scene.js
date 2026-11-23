@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=272";
-import { state, subscribe, summary } from "./state.js?v=272";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=274";
+import { analyzeOnPlate, rampMesh, slopePlan } from "./rampModules.js?v=274";
+import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=274";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -141,7 +142,13 @@ function rebuild(sun) {
       level,
       state.lowerRampMode || (plate && plate.lowerRampMode) || "alternate",
     );
-    levelRamps.forEach((ramp) => addRamp(ramp, rampMat, base, hazard));
+    levelRamps.forEach((ramp) => {
+      if (ramp.modules?.length && !isLegacyEquivalent(ramp, plate)) {
+        addModuleRamp(ramp, rampMat, base, hazard, level);
+      } else {
+        addRamp(ramp, rampMat, base, hazard);
+      }
+    });
     addSiteSetback(base);
     addWalls(concrete, base);
     addGates(base);
@@ -249,6 +256,27 @@ function addSlab(plate, base, material) {
 function rampHoles(plate) {
   const holes = [];
   state.ramps.forEach((ramp) => {
+    if (ramp.modules?.length && !isLegacyEquivalent(ramp, plate)) {
+      const legal = Number(plate.legalStalls) || 0;
+      const site = analyzeOnPlate(ramp, plate, { legalStalls: legal, blocks: plate.blockRects || [] });
+      (site.block || []).forEach((b) => {
+        const x = Math.max(0.6, b.x);
+        const y = Math.max(0.6, b.y);
+        const x2 = Math.min(plate.width - 0.6, b.x + b.w);
+        const y2 = Math.min(plate.depth - 0.6, b.y + b.d);
+        if (x2 - x > 1.2 && y2 - y > 1.2) holes.push({ x, y, w: x2 - x, d: y2 - y });
+      });
+      if (!(site.block || []).length && site.openings?.[0]) {
+        const op = site.openings[0];
+        const mouth = 2.4;
+        const half = (op.width || ramp.width) / 2;
+        if (op.edge === "w") holes.push({ x: 0.6, y: op.t - half, w: mouth, d: op.width || ramp.width });
+        if (op.edge === "e") holes.push({ x: plate.width - 0.6 - mouth, y: op.t - half, w: mouth, d: op.width || ramp.width });
+        if (op.edge === "s") holes.push({ x: op.t - half, y: 0.6, w: op.width || ramp.width, d: mouth });
+        if (op.edge === "n") holes.push({ x: op.t - half, y: plate.depth - 0.6 - mouth, w: op.width || ramp.width, d: mouth });
+      }
+      return;
+    }
     const box = rampFootprint(ramp, plate);
     const x = Math.max(0.6, box.x);
     const y = Math.max(0.6, box.y);
@@ -336,6 +364,34 @@ function addRamp(ramp, material, base, hazard) {
     addRampQuad(ramp, footprint, material, base, H);
   }
   addRampEdges(ramp, footprint, base, hazard);
+}
+
+/** 모듈 사슬 램프: rampMesh 삼각형을 BufferGeometry로. */
+function addModuleRamp(ramp, material, base, hazard, level = 0) {
+  const plate = state.plate;
+  const H = FLOOR_H;
+  const legal = Number(plate.legalStalls) || Number(plate.stallRules?.legalStalls) || 0;
+  const plan = slopePlan(ramp, { floorHeight: H, legalStalls: legal });
+  // groundY: 이 층 슬래브 위가 램프 시작 높이. rampMesh는 top - k*H.
+  const groundY = base + H;
+  const mesh = rampMesh(ramp, plan, { floorHeight: H, groundY });
+  const mk = (coords, mat) => {
+    if (!coords || coords.length < 9) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(coords, 3));
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, mat);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    host.add(m);
+  };
+  mk(mesh.surface, material);
+  mk(mesh.walls, standard("#6b6358", 0.75));
+  if (mesh.curbs?.length) {
+    // curbs는 사각형 링 좌표 — 간단히 연석 박스로 대체하지 않고 면으로
+    mk(mesh.curbs, hazard || standard("#c4a035", 0.6));
+  }
+  // 외부 연결 개구부는 addWalls cuts가 edge/t를 씀(applyPlateMeta로 맞춤)
 }
 
 /** 중심선 path(x,y,h)를 따라 폭 있는 경사 리본. */

@@ -1,10 +1,26 @@
-import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint, siteMarginsOf } from "./layout.js?v=272";
+import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint, siteMarginsOf } from "./layout.js?v=274";
+import { buildChain, slopePlan } from "./rampModules.js?v=274";
 
 const EDGE = { n: "북", e: "동", s: "남", w: "서" };
 
 function slopePercent(ramp) {
   if (!ramp.length) return 0;
   return (FLOOR_H / ramp.length) * 100;
+}
+
+function moduleSlopeLabel(ramp, plate) {
+  if (!ramp?.modules?.length) return null;
+  const legal = Number(plate?.legalStalls) || Number(plate?.stallRules?.legalStalls) || 0;
+  const plan = slopePlan(ramp, { floorHeight: FLOOR_H, legalStalls: legal });
+  const parts = plan.chain.modules.map((m, i) => {
+    const pm = plan.perModule[i];
+    const pct = pm ? `${(pm.slope * 100).toFixed(1)}%` : "";
+    if (m.type === "straight") return `직선 ${m.length.toFixed(1)}m ${pct}`;
+    return `90° ${m.dir === "L" ? "좌" : "우"} R${m.radius} ${pct}`;
+  });
+  const trans = plan.levels[0]?.trans;
+  const ease = trans ? ` (완화 ${trans.top || 0}m/${trans.bottom || 0}m)` : "";
+  return parts.join(" · ") + ease;
 }
 
 function uniqueSorted(values) {
@@ -120,6 +136,20 @@ export function renderSheet(paint, state, info, floorIndex) {
     paint.text(xOf(core.x + core.w / 2) - 22, yOf(core.y + core.d / 2), name, 12, "#111");
   });
   for (const ramp of state.ramps) {
+    if (ramp.modules?.length) {
+      const chain = buildChain(ramp);
+      chain.modules.forEach((m) => {
+        (m.rects || []).forEach((r) => {
+          paint.strokeRect(xOf(r.x), yOf(r.y + r.d), r.w * scale, r.d * scale, "#111", 1.4);
+        });
+      });
+      const label = moduleSlopeLabel(ramp, plate) || "";
+      const mid = chain.modules[0]?.start || { x: ramp.x, y: ramp.y };
+      paint.text(xOf(mid.x) - 40, yOf(mid.y) - 8, "모듈 램프", 11, "#111");
+      paint.text(xOf(mid.x) - 80, yOf(mid.y) + 10, label.slice(0, 56), 10, "#111");
+      if (label.length > 56) paint.text(xOf(mid.x) - 80, yOf(mid.y) + 24, label.slice(56, 112), 10, "#111");
+      continue;
+    }
     const box = rampFootprint(ramp, plate);
     paint.strokeRect(xOf(box.x), yOf(box.y + box.d), box.w * scale, box.d * scale, "#111", 1.6);
     const percent = slopePercent(ramp);

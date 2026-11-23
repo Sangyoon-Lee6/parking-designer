@@ -1,11 +1,11 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=272";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=272";
-import { drawThumb, mountPlan } from "./plan.js?v=272";
-import { stallRuleTargets } from "./stallTypes.js?v=272";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=272";
-import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=272";
-import { bindContextDialog, closeContext, openContext, openSitePicker, updatePickerMarker } from "./context.js?v=272";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=272";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=274";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=274";
+import { drawThumb, mountPlan } from "./plan.js?v=274";
+import { stallRuleTargets } from "./stallTypes.js?v=274";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=274";
+import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=274";
+import { bindContextDialog, closeContext, openContext, openSitePicker, updatePickerMarker } from "./context.js?v=274";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, rampModuleInfo, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=274";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -439,6 +439,40 @@ $("ramp-auto").addEventListener("click", () => {
   const auto = autoRampLength();
   updateRampSize({ length: auto, width: autoRampWidth() });
 });
+$("ramp-add-straight")?.addEventListener("click", () => editRampModules("addStraight"));
+$("ramp-add-turn-l")?.addEventListener("click", () => editRampModules("addTurnL"));
+$("ramp-add-turn-r")?.addEventListener("click", () => editRampModules("addTurnR"));
+$("ramp-del-module")?.addEventListener("click", () => editRampModules("remove"));
+$("ramp-rotate")?.addEventListener("click", () => rotateSelectedRamp(1));
+$("ramp-autofit")?.addEventListener("click", () => editRampModules("autoFit"));
+$("ramp-mod-length")?.addEventListener("change", () => {
+  const v = Number($("ramp-mod-length").value);
+  if (Number.isFinite(v)) editRampModules("setLength", { length: v });
+});
+$("ramp-mod-radius")?.addEventListener("change", () => {
+  const v = Number($("ramp-mod-radius").value);
+  if (Number.isFinite(v)) editRampModules("setRadius", { radius: v });
+});
+$("ramp-mod-levels")?.addEventListener("change", () => {
+  const v = Number($("ramp-mod-levels").value);
+  if (Number.isFinite(v)) editRampModules("setLevels", { levels: v });
+});
+$("ramp-mod-mode")?.addEventListener("change", () => {
+  editRampModules("setMode", { mode: $("ramp-mod-mode").value });
+});
+document.addEventListener("keydown", (event) => {
+  const tag = (event.target && event.target.tagName) || "";
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (event.key === "r" || event.key === "R") {
+    if (selectedRamp()) { event.preventDefault(); rotateSelectedRamp(1); }
+  }
+  if (event.key === "Delete" || event.key === "Backspace") {
+    if (selectedRamp() && state.selection?.module != null) {
+      event.preventDefault();
+      editRampModules("remove");
+    }
+  }
+});
 // 램프 길이는 층고로 자동 고정(읽기 전용)
 
 $("place-split").addEventListener("click", placeSplitExample);
@@ -614,7 +648,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=272")
+    sceneMount = import("./scene.js?v=274")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -964,9 +998,30 @@ function render() {
     const wid = ramp ? ramp.width : state.rampWidth;
     const auto = autoRampLength();
     const custom = Math.abs(len - auto) > 0.05 || Math.abs(wid - autoRampWidth()) > 0.05;
-    $("ramp-summary").textContent = `램프 폭 ${wid}m · 길이 ${len}m ${custom ? `(직접 입력 · 자동 ${autoRampWidth()}m · ${auto}m)` : `(층고 ${state.floorHeight}m 기준 자동)`}`;
+    const info = rampModuleInfo(ramp);
+    if (info?.chain) {
+      const total = info.chain.total;
+      const mode = info.ramp.mode === "spiral" ? "나선" : "반복";
+      const maxSlope = Math.max(0, ...(info.plan.perModule || []).map((p) => p.slope || 0));
+      const fix = info.plan.ok ? "" : ` · ${info.plan.levels.find((l) => !l.ok)?.fix?.text || "길이 부족"}`;
+      $("ramp-summary").textContent = `사슬 ${total.toFixed(1)}m · ${mode} · 최대 ${(maxSlope * 100).toFixed(1)}% · 폭 ${wid}m${fix}`;
+      if ($("ramp-module-note")) {
+        const issues = (info.site.issues || []).map((i) => i.text).slice(0, 3);
+        $("ramp-module-note").textContent = issues.join(" · ") || (info.legacyEq ? "예전 램프와 같은 모양(엔진·3D는 기존 경로)" : "모듈 사슬 경로");
+      }
+      if ($("ramp-mod-levels") && document.activeElement !== $("ramp-mod-levels")) $("ramp-mod-levels").value = info.ramp.levels || 1;
+      if ($("ramp-mod-mode") && document.activeElement !== $("ramp-mod-mode")) $("ramp-mod-mode").value = info.ramp.mode || "repeat";
+      if ($("ramp-mod-radius") && document.activeElement !== $("ramp-mod-radius")) $("ramp-mod-radius").value = info.ramp.innerRadius || 6;
+      const mi = state.selection?.module;
+      const mod = mi != null ? info.ramp.modules?.[mi] : null;
+      if (mod?.type === "straight" && $("ramp-mod-length") && document.activeElement !== $("ramp-mod-length")) {
+        $("ramp-mod-length").value = mod.length;
+      }
+    } else {
+      $("ramp-summary").textContent = `램프 폭 ${wid}m · 길이 ${len}m ${custom ? `(직접 입력 · 자동 ${autoRampWidth()}m · ${auto}m)` : `(층고 ${state.floorHeight}m 기준 자동)`}`;
+    }
   }
-  setIfIdle(fields.rampLength, ramp ? ramp.length : state.rampLength);
+  setIfIdle(fields.rampLength, ramp ? (ramp.length || ramp.modules?.[0]?.length || state.rampLength) : state.rampLength);
   renderPicks();
 
   // 입구·출구를 따로 찍는 건 외부 램프 + 분리 출입구일 때만. 내부 램프·램프 일체형은 램프 입구가 곧 입출구다.

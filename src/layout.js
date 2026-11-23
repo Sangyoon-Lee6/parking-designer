@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=272";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=274";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,14 +6,14 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=272";
-import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=272";
+} from "./rampForms.js?v=274";
+import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=274";
 import {
   analyzeOnPlate,
   slopePlan,
   usesModuleLayout,
   buildChain,
-} from "./rampModules.js?v=272";
+} from "./rampModules.js?v=274";
 
 export {
   lowerFloorRamp,
@@ -21,8 +21,8 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=272";
-export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=272";
+} from "./rampForms.js?v=274";
+export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=274";
 
 /** 모듈 사슬 램프의 평면 분석(legacy 동등이면 null). */
 function moduleSiteOf(ramp, plate, blocks = []) {

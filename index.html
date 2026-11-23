@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=272" />
+    <link rel="stylesheet" href="styles.css?v=274" />
     <script type="importmap">
       {
         "imports": {
@@ -454,6 +454,32 @@
             <p id="ramp-summary" class="hint"></p>
             <button type="button" id="open-ramp-dialog" class="ghost tiny">고급 설정</button>
           </div>
+          <div class="split" id="ramp-module-tools" style="flex-wrap:wrap;gap:0.35rem;margin:0.4rem 0">
+            <button type="button" id="ramp-add-straight" class="ghost tiny">+직선</button>
+            <button type="button" id="ramp-add-turn-l" class="ghost tiny">+90° 좌</button>
+            <button type="button" id="ramp-add-turn-r" class="ghost tiny">+90° 우</button>
+            <button type="button" id="ramp-del-module" class="ghost tiny">모듈 삭제</button>
+            <button type="button" id="ramp-rotate" class="ghost tiny">90° 회전</button>
+            <button type="button" id="ramp-autofit" class="ghost tiny">자동 맞춤</button>
+          </div>
+          <div class="split" id="ramp-module-fields" style="gap:0.5rem;margin-bottom:0.35rem">
+            <label class="tiny">직선 길이
+              <input id="ramp-mod-length" type="number" min="0.5" step="0.5" value="6" />
+            </label>
+            <label class="tiny">내변반경
+              <input id="ramp-mod-radius" type="number" min="5" step="0.5" value="6" />
+            </label>
+            <label class="tiny">층수
+              <input id="ramp-mod-levels" type="number" min="1" step="1" value="1" />
+            </label>
+            <label class="tiny">방식
+              <select id="ramp-mod-mode">
+                <option value="repeat">반복</option>
+                <option value="spiral">나선</option>
+              </select>
+            </label>
+          </div>
+          <p id="ramp-module-note" class="hint"></p>
           <dialog id="ramp-dialog" class="settings-dialog">
             <h3>램프 · 개구부 직접 설정</h3>
             <div class="split">
@@ -641,7 +667,7 @@
         <button type="button" id="wizard-next" class="primary">다음</button>
       </nav>
       <select id="circulation" hidden><option value="ccw" selected>반시계</option></select>
-      <p class="note"><span class="hint">버전 2026-11-22 · r272</span></p>
+      <p class="note"><span class="hint">버전 2026-11-22 · r274</span></p>
     </aside>
     </div>
 
@@ -654,7 +680,7 @@
     <button id="plan-expand-hit" type="button" hidden>expand</button>
     <button id="collapse-plan" type="button" hidden>접기</button>
 
-    <script type="module" src="src/main.js?v=272"></script>
+    <script type="module" src="src/main.js?v=274"></script>
     <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>

@@ -1,5 +1,11 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=272";
-import { moveOpening, moveRamp, placeOpening, placeRamp, selectCore, selectItem, state, subscribe, updateCore } from "./state.js?v=272";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=274";
+import {
+  analyzeOnPlate, buildChain, slopePlan, usesModuleLayout,
+} from "./rampModules.js?v=274";
+import {
+  moveOpening, moveRamp, moveRampFree, placeOpening, placeRamp,
+  selectCore, selectItem, state, subscribe, updateCore,
+} from "./state.js?v=274";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -125,11 +131,17 @@ export function mountPlan(canvas) {
         : [],
     );
     drawList.forEach((ramp) => {
-      const shape = rampShape(ramp, plate);
-      const footprint = shape.footprint || rampFootprint(ramp, plate);
       const selected = !ramp._lower && state.selection?.type === "ramp" && state.selection.id === ramp.id;
+      const selMod = selected ? state.selection?.module : null;
       const blocked = blockedRamps.has(ramp.id);
       const lower = ramp._lower;
+      const useMod = !lower && ramp.modules?.length && usesModuleLayout(ramp, plate, null);
+      if (useMod || (ramp.modules?.length && !lower)) {
+        drawModuleRamp(ctx, ramp, plate, { selected, selMod, blocked, lower, camera });
+        return;
+      }
+      const shape = rampShape(ramp, plate);
+      const footprint = shape.footprint || rampFootprint(ramp, plate);
       ctx.fillStyle = blocked ? "rgba(180, 40, 32, 0.35)" : (lower ? "rgba(61, 107, 79, 0.28)" : "rgba(168, 116, 42, 0.34)");
       ctx.strokeStyle = blocked ? "#b42318" : selected ? "#1e1a16" : (lower ? "#3d6b4f" : "#a8742a");
       ctx.lineWidth = (blocked || selected ? 2.6 : 1.5) / camera.scale;
@@ -230,10 +242,13 @@ export function mountPlan(canvas) {
       return;
     }
 
-    const ramp = hitRamp(world);
-    if (ramp && state.tool !== "entrance" && state.tool !== "exit") {
-      selectItem({ type: "ramp", id: ramp.id });
-      drag = { mode: "ramp", id: ramp.id, edge: ramp.edge };
+    const rampHit = hitRampDetail(world);
+    if (rampHit && state.tool !== "entrance" && state.tool !== "exit") {
+      selectItem({ type: "ramp", id: rampHit.id, module: rampHit.module });
+      const free = rampHit.ramp?.modules?.length;
+      drag = free
+        ? { mode: "rampFree", id: rampHit.id, ox: world.x - (rampHit.ramp.x || 0), oy: world.y - (rampHit.ramp.y || 0) }
+        : { mode: "ramp", id: rampHit.id, edge: rampHit.ramp.edge };
       canvas.setPointerCapture(event.pointerId);
       return;
     }
@@ -276,6 +291,10 @@ export function mountPlan(canvas) {
       if (!current) return;
       moveOpening(drag.id, edge ? edge.edge : current.edge, edge ? edge.t : projectAlong(current.edge, world));
     }
+    if (drag.mode === "rampFree") {
+      moveRampFree(drag.id, world.x - drag.ox, world.y - drag.oy, { live: true });
+      return;
+    }
     if (drag.mode === "ramp") {
       const current = state.ramps.find((item) => item.id === drag.id);
       if (!current) return;
@@ -284,6 +303,10 @@ export function mountPlan(canvas) {
   });
 
   canvas.addEventListener("pointerup", () => {
+    if (drag?.mode === "rampFree") {
+      const cur = state.ramps.find((item) => item.id === drag.id);
+      if (cur) moveRampFree(drag.id, cur.x, cur.y, { live: false });
+    }
     drag = null;
   });
 
@@ -431,8 +454,113 @@ function hitGate(point, gates) {
 }
 
 function hitRamp(point) {
-  const body = state.ramps.find((ramp) => hit(point, rampFootprint(ramp, state.plate)));
-  return body || hitGate(point, state.ramps);
+  const detail = hitRampDetail(point);
+  return detail ? detail.ramp : null;
+}
+
+function hitRampDetail(point) {
+  if (!state.plate) return null;
+  for (const ramp of state.ramps) {
+    if (ramp.modules?.length) {
+      const chain = buildChain(ramp);
+      for (let i = chain.modules.length - 1; i >= 0; i -= 1) {
+        const m = chain.modules[i];
+        if (m.rects?.some((r) => hit(point, r)) || (m.polygon && pointInPoly(point, m.polygon))) {
+          return { id: ramp.id, ramp, module: i };
+        }
+      }
+    }
+    if (hit(point, rampFootprint(ramp, state.plate))) {
+      return { id: ramp.id, ramp, module: null };
+    }
+  }
+  const gate = hitGate(point, state.ramps);
+  return gate ? { id: gate.id, ramp: gate, module: null } : null;
+}
+
+function pointInPoly(p, poly) {
+  let c = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i, i += 1) {
+    const a = poly[i]; const b = poly[j];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) c = !c;
+  }
+  return c;
+}
+
+function slopeColor(slope) {
+  const s = Math.max(0, Math.min(0.17, Number(slope) || 0));
+  const t = s / 0.17;
+  // 0% 초록 → 8.5% 노랑 → 17% 빨강
+  const r = t < 0.5 ? Math.round(60 + t * 2 * 180) : Math.round(240 + (t - 0.5) * 2 * 15);
+  const g = t < 0.5 ? Math.round(160 + t * 2 * 40) : Math.round(200 - (t - 0.5) * 2 * 160);
+  const b = t < 0.5 ? Math.round(80 - t * 2 * 40) : Math.round(40 - (t - 0.5) * 2 * 20);
+  return `rgba(${r},${g},${b},0.45)`;
+}
+
+function drawModuleRamp(ctx, ramp, plate, { selected, selMod, blocked, lower, camera }) {
+  const legal = Number(plate.legalStalls) || Number(plate.stallRules?.legalStalls) || 0;
+  const plan = slopePlan(ramp, { floorHeight: plate.floorHeight || 3.2, legalStalls: legal });
+  const site = analyzeOnPlate(ramp, plate, { legalStalls: legal, blocks: plate.blockRects || [] });
+  const chain = plan.chain || buildChain(ramp);
+  // keepClear
+  (site.keepClear || []).forEach((z) => {
+    ctx.fillStyle = "rgba(60, 120, 200, 0.18)";
+    ctx.strokeStyle = "rgba(60, 120, 200, 0.55)";
+    ctx.lineWidth = 1 / camera.scale;
+    ctx.fillRect(z.x, z.y, z.w, z.d);
+    ctx.strokeRect(z.x, z.y, z.w, z.d);
+    const name = z.role === "arrival" ? "도착 6m" : z.role === "top" ? "진입 6m" : z.role === "landing" ? "착지 6m" : "6m";
+    label(ctx, name, z.x + z.w / 2, z.y + z.d / 2, "#2c5a8e");
+  });
+  (site.openings || []).forEach((op) => {
+    ctx.strokeStyle = "#2f7a3e";
+    ctx.lineWidth = 3.5 / camera.scale;
+    const thick = 0.4;
+    if (op.edge === "w") ctx.strokeRect(0, op.t - op.width / 2, thick, op.width);
+    else if (op.edge === "e") ctx.strokeRect(plate.width - thick, op.t - op.width / 2, thick, op.width);
+    else if (op.edge === "s") ctx.strokeRect(op.t - op.width / 2, 0, op.width, thick);
+    else ctx.strokeRect(op.t - op.width / 2, plate.depth - thick, op.width, thick);
+  });
+  const err = blocked || (site.issues || []).some((i) => i.level === "error");
+  chain.modules.forEach((m, i) => {
+    const pm = (plan.perModule || [])[i] || {};
+    const slope = pm.slope != null ? pm.slope : (plan.levels?.[0]?.pieces?.find((p) => p.module === i)?.slope);
+    const fill = err ? "rgba(180, 40, 32, 0.35)" : slopeColor(slope);
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = err ? "#b42318" : (selected && selMod === i ? "#1e1a16" : selected ? "#5a4a2a" : "#a8742a");
+    ctx.lineWidth = (selected && selMod === i ? 3.2 : selected || err ? 2.4 : 1.5) / camera.scale;
+    if (m.polygon && m.polygon.length >= 3) {
+      ctx.beginPath();
+      m.polygon.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (m.rects?.[0]) {
+      const r = m.rects[0];
+      ctx.fillRect(r.x, r.y, r.w, r.d);
+      ctx.strokeRect(r.x, r.y, r.w, r.d);
+    }
+    const pct = slope != null ? `${(slope * 100).toFixed(1)}%` : "";
+    const mid = m.polygon?.[0] && m.polygon[Math.floor(m.polygon.length / 2)]
+      ? { x: (m.start.x + m.end.x) / 2, y: (m.start.y + m.end.y) / 2 }
+      : (m.rects?.[0] ? { x: m.rects[0].x + m.rects[0].w / 2, y: m.rects[0].y + m.rects[0].d / 2 } : m.start);
+    if (mid && pct) label(ctx, pct, mid.x, mid.y, "#5a3d10");
+  });
+  // 시작점·방향
+  if (chain.modules[0]) {
+    const s = chain.modules[0].start;
+    ctx.fillStyle = "#1e1a16";
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 0.45, 0, Math.PI * 2);
+    ctx.fill();
+    const rad = (s.h * Math.PI) / 180;
+    ctx.strokeStyle = "#1e1a16";
+    ctx.lineWidth = 2 / camera.scale;
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y);
+    ctx.lineTo(s.x + Math.cos(rad) * 2.5, s.y + Math.sin(rad) * 2.5);
+    ctx.stroke();
+  }
 }
 
 function projectAlong(edge, point) {
