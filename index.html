@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=275" />
+    <link rel="stylesheet" href="styles.css?v=276" />
     <script type="importmap">
       {
         "imports": {
@@ -407,7 +407,7 @@
           </select>
         </div>
         <div class="field">
-          <span class="field-label">지상 → 지하1층 형태 <span class="info" tabindex="0" title="주차장법 시행규칙 제6조①5: 곡선 내변반경 6m 이상(50대 이하 5m), 곡선 2차로 6.5m, 직선 경사 17%·곡선 14%, 도로변 3m는 직선 8.5%·곡선 7%. 자동은 깊이에 따라 직선/90° 곡선을 고릅니다. 외부형+90° 곡선은 외벽 밖으로 꺾여 내려갑니다.">ⓘ</span></span>
+          <span class="field-label">출입 램프 (지상→B1) <span class="info" tabindex="0" title="지상에서 지하1층으로 들어가는 램프 형태. 주차장법 시행규칙 제6조①5: 곡선 내변반경 6m 이상(50대 이하 5m), 곡선 2차로 6.5m, 직선 경사 17%·곡선 14%, 도로변 3m는 직선 8.5%·곡선 7%. 자동은 깊이에 따라 직선/90° 곡선을 고릅니다. 아래 «지하2층↓»과 따로 고를 수 있습니다.">ⓘ</span></span>
           <div class="choice" data-for="ramp-form" role="group">
             <button type="button" data-value="auto" class="on">자동</button>
             <button type="button" data-value="straight">직선</button>
@@ -422,7 +422,7 @@
           </select>
         </div>
         <div class="field">
-          <span class="field-label">지하2층↓ 형태 <span class="info" tabindex="0" title="B1→B2 이하 층간 램프 형태. «지상과 같음»은 위와 동일, «자동»은 지상 형태에 맞춰 직선↔곡선 등을 고릅니다. 참조 도면처럼 지상 진입과 층간 램프를 다르게 둘 때 쓰세요.">ⓘ</span></span>
+          <span class="field-label">층간 램프 (지하2층↓) <span class="info" tabindex="0" title="B1→B2 이하 층간 램프 형태. 위 출입 램프와 독립적으로 고릅니다. «지상과 같음»=출입과 동일, «자동»=출입에 맞춰 추천. 예: 출입은 직선, 층간은 90° 곡선.">ⓘ</span></span>
           <div class="choice" data-for="lower-ramp-form" role="group">
             <button type="button" data-value="auto" class="on">자동</button>
             <button type="button" data-value="same">지상과 같음</button>
@@ -703,7 +703,7 @@
         <button type="button" id="wizard-next" class="primary">다음</button>
       </nav>
       <select id="circulation" hidden><option value="ccw" selected>반시계</option></select>
-      <p class="note"><span class="hint">버전 2026-11-23 · r275</span></p>
+      <p class="note"><span class="hint">버전 2026-11-23 · r276</span></p>
     </aside>
     </div>
 
@@ -716,7 +716,7 @@
     <button id="plan-expand-hit" type="button" hidden>expand</button>
     <button id="collapse-plan" type="button" hidden>접기</button>
 
-    <script type="module" src="src/main.js?v=275"></script>
+    <script type="module" src="src/main.js?v=276"></script>
     <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>

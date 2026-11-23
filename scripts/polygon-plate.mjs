@@ -1,11 +1,11 @@
 // 다각형 평면 배치 검사: node scripts/polygon-plate.mjs
 import {
   layoutParking, referenceCase, minStraightRampLength, rampTransitions, defaultCore,
-} from "../src/layout.js?v=275";
+} from "../src/layout.js?v=276";
 import {
   presetL, presetU, presetTrapezoid, presetChamferRect, rectPolygon,
   rectInsidePolygon, pointInPolygon, polygonArea, validatePolygon,
-} from "../src/polygon.js?v=275";
+} from "../src/polygon.js?v=276";
 
 let fails = 0;
 const expect = (cond, msg) => {

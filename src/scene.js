@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=275";
-import { analyzeOnPlate, rampMesh, slopePlan } from "./rampModules.js?v=275";
-import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=275";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=276";
+import { analyzeOnPlate, rampMesh, slopePlan } from "./rampModules.js?v=276";
+import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=276";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -55,7 +55,16 @@ export function mountScene(container) {
     if (state.step !== 3) return;
     requestAnimationFrame(() => {
       resize();
-      rebuild(sun);
+      try {
+        rebuild(sun);
+      } catch (err) {
+        console.error("3D rebuild failed", err);
+        const box = document.getElementById("step2-error");
+        if (box) {
+          box.hidden = false;
+          box.textContent = `3D 모델 생성 오류: ${err && err.message ? err.message : err}`;
+        }
+      }
     });
   });
 
@@ -231,11 +240,17 @@ function standard(color, roughness, map) {
 
 function addSlab(plate, base, material) {
   const shape = new THREE.Shape();
-  const poly = (plate.polygon && plate.polygon.length >= 3)
+  let poly = (plate.polygon && plate.polygon.length >= 3)
     ? plate.polygon
     : [{ x: 0, y: 0 }, { x: plate.width, y: 0 }, { x: plate.width, y: plate.depth }, { x: 0, y: plate.depth }];
+  // 닫힘 점 중복 제거(ExtrudeGeometry 퇴화 방지)
+  if (poly.length > 1) {
+    const a = poly[0];
+    const b = poly[poly.length - 1];
+    if (Math.hypot(a.x - b.x, a.y - b.y) < 1e-6) poly = poly.slice(0, -1);
+  }
   poly.forEach((p, i) => (i ? shape.lineTo(p.x, p.y) : shape.moveTo(p.x, p.y)));
-  shape.lineTo(poly[0].x, poly[0].y);
+  shape.closePath();
   rampHoles(plate).forEach((hole) => {
     const path = new THREE.Path();
     path.moveTo(hole.x, hole.y);

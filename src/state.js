@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=275";
+import { calculateDemand, emptyDemand } from "./demand.js?v=276";
 import {
   basementCount,
   bestLayoutFor,
@@ -19,7 +19,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=275";
+} from "./layout.js?v=276";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -33,7 +33,7 @@ import {
   slopePlan,
   analyzeOnPlate,
   buildChain,
-} from "./rampModules.js?v=275";
+} from "./rampModules.js?v=276";
 import {
   normalizePolygon,
   outsideBlockRects,
@@ -42,7 +42,7 @@ import {
   polygonFromPlate,
   rectPolygon,
   validatePolygon,
-} from "./polygon.js?v=275";
+} from "./polygon.js?v=276";
 
 export const state = {
   step: 1,
@@ -642,8 +642,23 @@ export function setStep(step) {
 }
 
 export function readyFor3d() {
-  const columnBlocked = state.issues.some((issue) => issue.type === "column") || (state.metrics && state.metrics.columnHits > 0);
-  return Boolean(state.plate && state.cores.length && state.openings.length && state.ramps.length && state.connected && !columnBlocked);
+  const columnBlocked = state.issues.some((issue) => issue.type === "column")
+    || (state.metrics && state.metrics.columnHits > 0);
+  // 내부·일체형 램프는 openings가 비어도 램프 자체가 출입. metrics.valid(겹침·경사 등)와
+  // 동선 연결(metrics.connected)을 구분해, 대지만 살짝 넘친 경우에도 모델을 볼 수 있게 한다.
+  const hasAccess = (state.openings && state.openings.length > 0) || (state.ramps && state.ramps.length > 0);
+  const networkOk = state.metrics
+    ? state.metrics.connected !== false
+    : Boolean(state.connected);
+  return Boolean(
+    state.plate
+    && state.cores.length
+    && hasAccess
+    && state.ramps.length
+    && networkOk
+    && !columnBlocked
+    && (state.stalls?.length > 0),
+  );
 }
 
 export function demandResult() {

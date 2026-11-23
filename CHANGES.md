@@ -3,6 +3,12 @@
 AI(Claude)와 함께 확인·수정한 내용입니다. 각 항목은 문제 → 원인 → 수정 → 확인 순서로 적었습니다.
 점검은 `node scripts/report.mjs`(기존 회귀 점검)와 `node scripts/stall-types.mjs`(이번 추가 점검)로 했습니다.
 
+## v276 — 램프 형태 분리 유지 · 주소·3D 수정
+
+- **주소** Photon `lang=ko`가 400을 내던 문제 → `lang=default`. Nominatim User-Agent는 Node에서만.
+- **3D** `readyFor3d`가 openings·metrics.valid에 과도 의존하던 조건 완화. 결과 탭에서 scene 미마운트 시 model→plan 강제 되돌리기 제거. scene rebuild try/catch.
+- **램프** `normalizePlate`가 `rampForm`/`lowerRampForm`/`lowerRampMode`를 보존. 지상·지하2층↓ 형태 변경 시 재배치. 캐시 `?v=276`.
+
 ## v275 — DXF 내보내기 · 다각형 평면
 
 - **DXF** 결과 평면도 아래 «CAD 파일로 내보내기(DXF)» (AC1015 ASCII, 단위 m/mm·전 층 옵션). `src/dxfExport.js` 무의존, 레이어 PD-*, 한글 `\U+`·malgun.ttf. `scripts/dxf-export.mjs` 검사.

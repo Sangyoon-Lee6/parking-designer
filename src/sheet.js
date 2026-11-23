@@ -1,6 +1,6 @@
-import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint, siteMarginsOf } from "./layout.js?v=275";
-import { buildChain, slopePlan } from "./rampModules.js?v=275";
-import { polygonFromPlate } from "./polygon.js?v=275";
+import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint, siteMarginsOf } from "./layout.js?v=276";
+import { buildChain, slopePlan } from "./rampModules.js?v=276";
+import { polygonFromPlate } from "./polygon.js?v=276";
 
 const EDGE = { n: "북", e: "동", s: "남", w: "서" };
 

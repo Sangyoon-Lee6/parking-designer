@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=275";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=276";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,14 +6,14 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=275";
-import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=275";
+} from "./rampForms.js?v=276";
+import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=276";
 import {
   analyzeOnPlate,
   slopePlan,
   usesModuleLayout,
   buildChain,
-} from "./rampModules.js?v=275";
+} from "./rampModules.js?v=276";
 import {
   polygonFromPlate,
   rectPolygon,
@@ -21,7 +21,7 @@ import {
   outsideBlockRects,
   isRectangularPlate,
   insetPolygon,
-} from "./polygon.js?v=275";
+} from "./polygon.js?v=276";
 
 export {
   lowerFloorRamp,
@@ -29,8 +29,8 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=275";
-export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=275";
+} from "./rampForms.js?v=276";
+export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=276";
 
 /** 모듈 사슬 램프의 평면 분석(legacy 동등이면 null). */
 function moduleSiteOf(ramp, plate, blocks = []) {
@@ -2521,6 +2521,12 @@ function normalizePlate(plate) {
     floorHeight: floorHeightOf(plate),
     legalStalls: Number(plate.legalStalls) || (plate.stallRules && Number(plate.stallRules.legalStalls)) || 0,
     keepClear: plate.keepClear || null,
+    // 지상 진입·지하2층↓ 형태/경로 — 떨어뜨리면 층간 램프가 항상 auto로 줄어든다
+    rampForm: plate.rampForm || "auto",
+    lowerRampForm: plate.lowerRampForm || "auto",
+    lowerRampMode: plate.lowerRampMode || "alternate",
+    rampPos: plate.rampPos || null,
+    rampPlacement: plate.rampPlacement || null,
   };
 }
 
@@ -4303,6 +4309,9 @@ function layoutWithGap(input) {
     keepClear: outerKeep,
     buildings: raw.buildings || res.plate.buildings,
     polygon: restoredPoly,
+    rampForm: raw.rampForm || res.plate.rampForm || "auto",
+    lowerRampForm: raw.lowerRampForm || res.plate.lowerRampForm || "auto",
+    lowerRampMode: raw.lowerRampMode || res.plate.lowerRampMode || "alternate",
   };
   out.keepClear = outerKeep;
   // gap 복원 후 — 비사각형 다각형만 밖 기둥·칸 재필터

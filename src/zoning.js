@@ -247,14 +247,12 @@ function limitsFor(name) {
 }
 
 async function nominatimFetch(url) {
-  const res = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      // Nominatim 이용 정책: 식별 가능한 User-Agent 필요
-      "User-Agent": "parking-designer/1.0 (local parking layout tool)",
-    },
-    referrerPolicy: "no-referrer",
-  });
+  // 브라우저에서는 User-Agent를 바꿀 수 없음(금지 헤더). Accept만 지정.
+  const headers = { Accept: "application/json" };
+  if (typeof document === "undefined") {
+    headers["User-Agent"] = "parking-designer/1.0 (local parking layout tool)";
+  }
+  const res = await fetch(url, { headers, referrerPolicy: "no-referrer" });
   if (!res.ok) throw new Error(`Nominatim HTTP ${res.status}`);
   return res.json();
 }
@@ -268,7 +266,8 @@ function notFoundError(msg = "주소를 찾지 못했습니다") {
 /** Photon(Komoot) — 브라우저 CORS 허용, 브이월드·Nominatim 장애 시 좌표 폴백 */
 async function photonSearch(address) {
   const q = encodeURIComponent(String(address || "").trim());
-  const url = `https://photon.komoot.io/api/?q=${q}&limit=1&lang=ko`;
+  // Photon은 한국어 locale 미지원(default|de|en|fr만). 잘못된 locale이면 400 → 주소 조회 전부 실패.
+  const url = `https://photon.komoot.io/api/?q=${q}&limit=1&lang=default`;
   const data = await fetchJson(url);
   const hit = Array.isArray(data?.features) ? data.features[0] : null;
   if (!hit || !hit.geometry || !hit.geometry.coordinates) throw notFoundError();
@@ -286,7 +285,7 @@ async function photonSearch(address) {
 }
 
 async function photonReverse(x, y) {
-  const url = `https://photon.komoot.io/reverse?lon=${encodeURIComponent(x)}&lat=${encodeURIComponent(y)}&lang=ko`;
+  const url = `https://photon.komoot.io/reverse?lon=${encodeURIComponent(x)}&lat=${encodeURIComponent(y)}&lang=default`;
   const data = await fetchJson(url);
   const hit = Array.isArray(data?.features) ? data.features[0] : null;
   const p = hit?.properties || {};

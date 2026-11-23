@@ -3,9 +3,9 @@
  * 단위: 평면 m. unitScale — mm면 ×1000.
  * 한글: \U+XXXX 이스케이프, 스타일 malgun.ttf.
  */
-import { closedRing, polygonFromPlate } from "./polygon.js?v=275";
-import { rampFootprint, rampShape, siteMarginsOf } from "./layout.js?v=275";
-import { buildChain } from "./rampModules.js?v=275";
+import { closedRing, polygonFromPlate } from "./polygon.js?v=276";
+import { rampFootprint, rampShape, siteMarginsOf } from "./layout.js?v=276";
+import { buildChain } from "./rampModules.js?v=276";
 
 const LAYERS = [
   ["PD-PLATE", 7, "CONTINUOUS"],
@@ -282,7 +282,7 @@ export function buildDxf(state, info = {}, opts = {}) {
       `배치 대수: ${info.placed ?? state.stalls?.length ?? 0}대`,
       `법정 대수: ${info.required ?? plate.legalStalls ?? 0}대`,
       `날짜: ${info.checkedOn || new Date().toISOString().slice(0, 10)}`,
-      `버전: ${opts.version || "r275"} · 단위 ${unit}`,
+      `버전: ${opts.version || "r276"} · 단위 ${unit}`,
     ];
     title.forEach((t, i) => {
       entities += text("PD-TEXT", ox, -6 - i * 1.2, 0.6, t, scale, 0);

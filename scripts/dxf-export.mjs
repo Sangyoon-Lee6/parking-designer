@@ -1,7 +1,7 @@
 // DXF 내보내기 검사: node scripts/dxf-export.mjs
-import { referenceCase, layoutParking, defaultCore, minStraightRampLength, rampTransitions } from "../src/layout.js?v=275";
-import { buildDxf, LAYERS, dxfText } from "../src/dxfExport.js?v=275";
-import { polygonFromPlate } from "../src/polygon.js?v=275";
+import { referenceCase, layoutParking, defaultCore, minStraightRampLength, rampTransitions } from "../src/layout.js?v=276";
+import { buildDxf, LAYERS, dxfText } from "../src/dxfExport.js?v=276";
+import { polygonFromPlate } from "../src/polygon.js?v=276";
 
 let fails = 0;
 const expect = (cond, msg) => {
@@ -51,7 +51,7 @@ const info = {
 };
 
 console.log("\n[DXF] 기준 사례 내보내기");
-const { dxf, meta, stallCount } = buildDxf(state, info, { unit: "mm", floorIndex: 0, version: "r275" });
+const { dxf, meta, stallCount } = buildDxf(state, info, { unit: "mm", floorIndex: 0, version: "r276" });
 
 expect(dxf.includes("SECTION") && dxf.includes("ENDSEC") && dxf.includes("EOF"), "SECTION/ENDSEC/EOF 짝");
 const sectionCount = (dxf.match(/(?:^|\n)0\nSECTION\n/g) || []).length;
