@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=269";
+import { calculateDemand, emptyDemand } from "./demand.js?v=270";
 import {
   basementCount,
   bestLayoutFor,
@@ -17,7 +17,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=269";
+} from "./layout.js?v=270";
 
 export const state = {
   step: 1,
