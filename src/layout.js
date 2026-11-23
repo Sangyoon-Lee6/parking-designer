@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=271";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=272";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,8 +6,14 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=271";
-import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=271";
+} from "./rampForms.js?v=272";
+import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=272";
+import {
+  analyzeOnPlate,
+  slopePlan,
+  usesModuleLayout,
+  buildChain,
+} from "./rampModules.js?v=272";
 
 export {
   lowerFloorRamp,
@@ -15,8 +21,20 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=271";
-export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=271";
+} from "./rampForms.js?v=272";
+export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=272";
+
+/** 모듈 사슬 램프의 평면 분석(legacy 동등이면 null). */
+function moduleSiteOf(ramp, plate, blocks = []) {
+  if (!ramp || !plate) return null;
+  let shape = null;
+  if (ramp.legacy) {
+    try { shape = rampShape(ramp.legacy, plate); } catch (e) { shape = null; }
+  }
+  if (!usesModuleLayout(ramp, plate, shape)) return null;
+  const legal = Number(plate.legalStalls) || Number(plate.stallRules?.legalStalls) || 0;
+  return analyzeOnPlate(ramp, plate, { legalStalls: legal, blocks });
+}
 
 /**
  * 주차장법 시행규칙 제3조·제6조. 확인 2026-11-08. law.go.kr
@@ -1107,7 +1125,7 @@ export function rampPositionCheck(plate, placement, floorHeight) {
   return out;
 }
 
-/** 동이 1개 이상이고 외부 램프면 단지형 차로 먼저 엔진을 쓴다. */
+/** 동이 1개 이상이고 (외부 램프 또는 모듈 사슬 램프)면 단지형 차로 먼저 엔진을 쓴다. */
 export function complexMode(input) {
   const plate = input?.plate || {};
   const blocks = plate.blockRects || [];
@@ -1115,7 +1133,11 @@ export function complexMode(input) {
   const towers = input.towers || [];
   const ramp = (input.ramps || [])[0];
   const placement = ramp?.placement || input.rampPlacement || "internal";
-  return placement === "external" && (blocks.length > 0 || buildings.length > 0 || towers.length > 0);
+  const hasTowers = blocks.length > 0 || buildings.length > 0 || towers.length > 0;
+  if (!hasTowers) return false;
+  if (placement === "external") return true;
+  // 모듈 사슬(예전과 다른 내부·걸침)도 차로 먼저 엔진으로 돌린다.
+  return Boolean(moduleSiteOf(ramp, plate, towers.length ? towers : blocks));
 }
 
 function complexInputOf(input) {
@@ -1125,11 +1147,51 @@ function complexInputOf(input) {
     : (plate.blockRects && plate.blockRects.length)
       ? plate.blockRects
       : towerBlockRects(plate.buildings || [], input.cores || [], plate);
+  const ramp0 = (input.ramps || [])[0];
+  const site = moduleSiteOf(ramp0, plate, towers);
+  const obstacles = site ? (site.block || []).slice() : [];
+  const keepClear = site ? (site.keepClear || []).slice() : (plate.keepClear || []).slice();
+  let ramps = input.ramps || [];
+  let openings = input.openings || [];
+  // 내부·걸침 모듈은 외벽 연결점(또는 도로변)으로 진입 스텁을 만들어 loopFirst가 진입로를 잡게 한다.
+  if (site && site.placement !== "external") {
+    const op = (site.openings && site.openings[0])
+      || { edge: plate.roadEdge || ramp0?.edge || "w", t: ramp0?.t || 10, width: ramp0?.width || 6 };
+    const stub = {
+      id: ramp0?.id || 1,
+      edge: op.edge,
+      t: op.t,
+      width: Math.max(op.width || 6, 6),
+      length: Math.max(Number(ramp0?.length) || 21.5, 12),
+      placement: "external",
+      modules: ramp0?.modules,
+      legacy: ramp0?.legacy,
+      mixed: site.placement === "mixed" || undefined,
+    };
+    ramps = [stub];
+    openings = site.openings || openings;
+  } else if (site && site.placement === "external") {
+    // 모듈 외부형: placement·edge·t를 명시해 loopFirst가 null로 빠지지 않게 한다.
+    const op = (site.openings && site.openings[0]) || {};
+    ramps = (input.ramps || []).map((r) => ({
+      ...r,
+      placement: "external",
+      edge: r.edge ?? op.edge ?? plate.roadEdge ?? "w",
+      t: r.t ?? op.t ?? 10,
+      width: r.width || 6,
+      length: r.length || (r.modules && r.modules[0] && r.modules[0].length) || 21.5,
+    }));
+  }
   return {
-    plate: { ...plate, blockRects: towers },
+    plate: { ...plate, blockRects: towers, keepClear },
     towers,
     cores: input.cores || [],
-    ramps: input.ramps || [],
+    ramps,
+    openings,
+    obstacles,
+    keepClear,
+    moduleSite: site || null,
+    allowInternalModule: Boolean(site && site.placement !== "external"),
   };
 }
 
@@ -1161,9 +1223,25 @@ export function loopFirstResult(input, c) {
   const route = drives.map((seg) => ({ x: seg.x1, y: seg.y1 }))
     .concat(drives.length ? [{ x: drives[drives.length - 1].x2, y: drives[drives.length - 1].y2 }] : []);
 
+  const modSite = input.moduleSite || null;
+  const keepClear = (input.keepClear || c.keepClear || plate.keepClear || []).slice();
+  // keepClear 안 칸 제거(엔진 어댑터 누락 대비)
+  let filteredStalls = stalls;
+  if (keepClear.length) {
+    filteredStalls = stalls.filter((s) => !keepClear.some((z) => overlapArea(s, z) > 0.05));
+  }
   const issues = [];
-  issues.push(...portalIssues(aisles, openings, [ramp], plate));
-  issues.push(...siteIssues([ramp], plate));
+  if (modSite) {
+    issues.push(...modulePortalIssues(aisles, keepClear, modSite));
+    issues.push(...moduleSlopeIssues(ramp, plate));
+    issues.push(...moduleSiteIssues(ramp, plate));
+    (modSite.issues || []).filter((i) => i.level === "error").forEach((i) => {
+      issues.push({ type: "ramp", label: i.text });
+    });
+  } else {
+    issues.push(...portalIssues(aisles, openings, [ramp], plate));
+    issues.push(...siteIssues([ramp], plate));
+  }
   issues.push(...roadIssues([ramp], plate));
   const blockRects = plate.blockRects || c.towers || [];
   issues.push(...coreAccessIssues(cores, aisles, blockRects, plate));
@@ -1175,13 +1253,14 @@ export function loopFirstResult(input, c) {
       issues.push({ type: "network", label: `${name} 코어에 닿는 차로가 없습니다.` });
     }
   });
-  const columnHits = stallColumnHits(stalls, columns, plate.minClear == null ? 0.05 : plate.minClear);
+  const columnHits = stallColumnHits(filteredStalls, columns, plate.minClear == null ? 0.05 : plate.minClear);
   if (columnHits > 0) issues.push({ type: "column", label: `주차칸-기둥 충돌 ${columnHits}건` });
-  const overlapCount = countOverlaps({ stalls, aisles, columns }, cores, [], plate);
+  const rampBlocks = modSite ? (modSite.block || []) : [];
+  const overlapCount = countOverlaps({ stalls: filteredStalls, aisles, columns }, cores, rampBlocks, plate);
   if (overlapCount > 0) issues.push({ type: "overlap", label: `주차칸·차로·기둥·코어·램프가 겹치는 곳 ${overlapCount}곳` });
-  const types = c.metrics.stallTypes || tallyStallTypes(stalls, c.metrics.stallTargets || stallRuleTargets(plate.stallRules)).counts;
-  const targets = c.metrics.stallTargets || stallRuleTargets({ ...(plate.stallRules || {}), placedStalls: stalls.length });
-  const shortages = c.metrics.shortages || tallyStallTypes(stalls, targets).shortages;
+  const types = c.metrics.stallTypes || tallyStallTypes(filteredStalls, c.metrics.stallTargets || stallRuleTargets(plate.stallRules)).counts;
+  const targets = c.metrics.stallTargets || stallRuleTargets({ ...(plate.stallRules || {}), placedStalls: filteredStalls.length });
+  const shortages = c.metrics.shortages || tallyStallTypes(filteredStalls, targets).shortages;
   shortages.forEach((label) => issues.push({ type: "stallType", label }));
   if ((c.metrics.longSpans || 0) > 0) {
     issues.push({ type: "span", label: `기둥 간격 12m 초과 ${c.metrics.longSpans}곳` });
@@ -1189,24 +1268,25 @@ export function loopFirstResult(input, c) {
   if ((c.metrics.deadEnds || 0) > 0) {
     issues.push({ type: "notice", label: `막다른 차로 끝 ${c.metrics.deadEnds}곳` });
   }
-  if (!stalls.length) issues.push({ type: "empty", label: "주차칸이 하나도 들어가지 않습니다." });
+  if (!filteredStalls.length) issues.push({ type: "empty", label: "주차칸이 하나도 들어가지 않습니다." });
 
   const connected = !issues.some((issue) => issue.type === "opening" || issue.type === "ramp" || issue.type === "network")
     && (c.metrics.connected !== false);
-  const slopeOk = true;
+  const slopeOk = !issues.some((issue) => issue.type === "slope");
   const siteOk = !issues.some((issue) => issue.type === "site");
   const plateArea = plate.width * plate.depth;
   const aisleRatio = c.metrics.aisleRatio != null
     ? c.metrics.aisleRatio
     : (plateArea ? round3(aisles.reduce((s, a) => s + a.w * a.d, 0) / plateArea) : 0);
-  const valid = Boolean(c.metrics.valid) && connected && columnHits === 0 && overlapCount === 0 && stalls.length > 0 && siteOk;
+  const valid = Boolean(c.metrics.valid) && connected && columnHits === 0 && overlapCount === 0 && filteredStalls.length > 0 && siteOk && slopeOk;
   const axis = (c.spec && c.spec.axis) || "x";
   const gridX = [...new Set(columns.map((col) => round3(col.x + col.w / 2)))].sort((a, b) => a - b);
   const gridY = [...new Set(columns.map((col) => round3(col.y + col.d / 2)))].sort((a, b) => a - b);
   const spec = { ...(c.spec || {}), engine: "loopFirst", axis };
+  const outRamp = (input.ramps && input.ramps[0]) || ramp;
 
   return {
-    stalls,
+    stalls: filteredStalls.map((s, i) => ({ ...s, no: i + 1 })),
     aisles,
     columns,
     drives,
@@ -1220,17 +1300,19 @@ export function loopFirstResult(input, c) {
     gridY,
     cores,
     openings,
-    ramps: [ramp],
-    plate: { ...plate, blockRects },
+    ramps: [outRamp],
+    plate: { ...plate, blockRects, keepClear },
+    keepClear,
+    moduleSite: modSite,
     spec,
     bay: null,
     columnConflicts: [],
-    clearance: clearanceMark(stalls, columns),
+    clearance: clearanceMark(filteredStalls, columns),
     complex: true,
     loopFirst: true,
     metrics: {
-      stalls: stalls.length,
-      areaPerStall: stalls.length ? round3(plateArea / stalls.length) : 0,
+      stalls: filteredStalls.length,
+      areaPerStall: filteredStalls.length ? round3(plateArea / filteredStalls.length) : 0,
       aisleRatio,
       connected,
       columnHits,
@@ -1243,6 +1325,7 @@ export function loopFirstResult(input, c) {
       valid,
       stallTypes: types,
       stallTargets: targets,
+      zoneTouch: c.metrics.zoneTouch || [],
       rejected: valid ? null : (c.metrics.rejected || rejectReason({
         connected, aisleWidthOk: true, columnHits, slopeOk, siteOk, overlapCount,
       })),
@@ -1253,6 +1336,53 @@ export function loopFirstResult(input, c) {
       shortages,
     },
   };
+}
+
+function modulePortalIssues(aisles, keepClear, modSite) {
+  const groups = componentGroups(aisles);
+  const main = groups.slice().sort((a, b) => b.length - a.length)[0] || [];
+  const mainAisles = main.map((i) => aisles[i]);
+  const issues = [];
+  const roleLabel = { arrival: "도착", top: "진입", landing: "착지" };
+  (keepClear || []).forEach((z) => {
+    const ok = mainAisles.some((a) => overlapArea(a, z) > 0.4);
+    if (ok) return;
+    issues.push({
+      type: "ramp",
+      label: `램프 ${roleLabel[z.role] || z.role || ""} 구역이 차로와 이어지지 않습니다`.replace("  ", " "),
+    });
+  });
+  return issues;
+}
+
+function moduleSlopeIssues(ramp, plate) {
+  if (!ramp?.modules?.length) return [];
+  const H = floorHeightOf(plate);
+  const legal = Number(plate.legalStalls) || Number(plate.stallRules?.legalStalls) || 0;
+  const plan = slopePlan(ramp, { floorHeight: H, legalStalls: legal });
+  const issues = [];
+  (plan.levels || []).forEach((lv) => {
+    if (lv.ok) return;
+    const text = lv.fix?.text ? ` — ${lv.fix.text}` : "";
+    issues.push({ type: "slope", id: ramp.id, label: `${lv.name} 램프 길이가 층고에 모자랍니다(${lv.shortfall}m)${text}` });
+  });
+  return issues;
+}
+
+function moduleSiteIssues(ramp, plate) {
+  if (!ramp?.modules?.length) return [];
+  const chain = buildChain(ramp);
+  const boxes = chain.modules.flatMap((m) => m.rects || []);
+  if (!boxes.length) return [];
+  const x0 = Math.min(...boxes.map((b) => b.x));
+  const y0 = Math.min(...boxes.map((b) => b.y));
+  const x1 = Math.max(...boxes.map((b) => b.x + b.w));
+  const y1 = Math.max(...boxes.map((b) => b.y + b.d));
+  const m = siteMarginsOf(plate);
+  const outside = x0 < -m.w - 0.05 || y0 < -m.s - 0.05
+    || x1 > plate.width + m.e + 0.05 || y1 > plate.depth + m.n + 0.05;
+  if (!outside) return [];
+  return [{ type: "site", id: ramp.id, label: "램프가 대지 여유 밖으로 나갑니다." }];
 }
 
 export function generateVariants(input) {
@@ -1423,8 +1553,16 @@ export function layoutParking(input) {
     input = { ...input, ramps: input.ramps.map((r) => { if (!r || r.inset == null) return r; const { inset, ...rest } = r; return rest; }) };
   }
   if (input.spec && input.spec.engine === "loopFirst" && complexMode(input)) {
-    const raw = layoutLoopFirst(complexInputOf(input), input.spec);
-    const converted = loopFirstResult(input, raw);
+    const cin = complexInputOf(input);
+    const raw = layoutLoopFirst(cin, input.spec);
+    const converted = loopFirstResult({ ...input, moduleSite: cin.moduleSite, keepClear: cin.keepClear }, raw);
+    if (converted) return converted;
+  }
+  // 단지형 + 모듈 사슬이면 loopFirst를 기본으로 시도(스펙에 engine이 없어도).
+  if (complexMode(input) && !(input.spec && input.spec.engine) && moduleSiteOf((input.ramps || [])[0], input.plate || {}, input.towers || input.plate?.blockRects || [])) {
+    const cin = complexInputOf(input);
+    const raw = layoutLoopFirst(cin, { ...(input.spec || {}), axis: (input.spec && input.spec.axis) || "x" });
+    const converted = loopFirstResult({ ...input, moduleSite: cin.moduleSite, keepClear: cin.keepClear }, raw);
     if (converted) return converted;
   }
   const res = layoutWithGap(input);
@@ -1700,8 +1838,28 @@ function layoutCore(input) {
     strip = { ...strip, k: ramp.width };
   }
   const openings = buildOpenings(input, plate, ramp, entranceMode);
+  // 모듈 사슬(예전과 다른 모양)이면 analyzeOnPlate로 장애물·비울 구역을 잡는다.
+  const earlyBlocks = plate.blockRects || [];
+  const modSite = moduleSiteOf(ramp, plate, earlyBlocks);
+  if (modSite) {
+    plate.keepClear = (plate.keepClear || []).concat(modSite.keepClear || []);
+    if (modSite.placement === "mixed") {
+      ramp.placement = "internal";
+      ramp.mixed = true;
+    } else if (modSite.placement) {
+      ramp.placement = modSite.placement;
+    }
+    if (modSite.openings && modSite.openings[0]) {
+      ramp.edge = modSite.openings[0].edge;
+      ramp.t = modSite.openings[0].t;
+    }
+  }
+  const keepClear = (plate.keepClear || []).slice();
   // 램프 도착 쪽 끝 앞 6m(차로 폭)도 비워 둔다: 코어가 바로 앞을 막으면 도착한 차가 나갈 길이 없다(동선 끊김).
-  const rampBox = (ramp.placement || "internal") === "internal" ? withArrivalZone(rampFootprint(ramp, plate), ramp, plate) : null;
+  // 모듈 경로면 keepClear가 도착·진입 구역을 대신한다.
+  const rampBox = modSite
+    ? (keepClear.find((z) => z.role === "arrival") || keepClear[0] || null)
+    : ((ramp.placement || "internal") === "internal" ? withArrivalZone(rampFootprint(ramp, plate), ramp, plate) : null);
   // 배치 틀(줄·차로)과 기둥 격자를 먼저 정하고, 격자 맞춤 코어를 실제 격자 칸에 맞춘다(코어가 기둥 격자 안에).
   const geo = layoutGeometry(plate, spec, strip);
   const bands = geo.bands;
@@ -1754,27 +1912,35 @@ function layoutCore(input) {
 
   const bay = stallsPerBay(plate.spacing, plate.columnWidth, plate.minClear);
   const bayStats = { total: 0, triple: 0 };
-  const shape = rampShape(ramp, plate);
+  const shape = modSite ? { kind: "module", pieces: modSite.block || [], ok: true } : rampShape(ramp, plate);
   // 외곽 회전이 실패한 경우 form을 실제 쓴 형태로 낮춰, 이후 층간·점유 계산이 깨진 spiral을 다시 쓰지 않게 한다.
   if (shape.fallbackFrom === "spiral") {
     ramp.form = shape.kind === "curved" ? "curve90" : "straight";
   }
-  const internal = (ramp.placement || "internal") === "internal" || shape.kind === "spiral" || shape.externalCurve;
+  const internal = modSite
+    ? (modSite.placement !== "external" && (modSite.block || []).length > 0)
+    : ((ramp.placement || "internal") === "internal" || shape.kind === "spiral" || shape.externalCurve);
   // 지하 2층+ 다른 경로(alternate)면 층간 램프 자리도 평면에 비워 둔다.
   const lowerMode = plate.lowerRampMode || input.lowerRampMode || "alternate";
-  const occ = occupancyRamps([ramp], plate, lowerMode);
   const rampPieces = [];
-  occ.forEach((r) => {
-    const sh = rampShape(r, plate);
-    (sh.pieces || []).forEach((p) => rampPieces.push(p));
-  });
-  if (!rampPieces.length && internal) (shape.pieces || []).forEach((p) => rampPieces.push(p));
+  if (modSite) {
+    (modSite.block || []).forEach((p) => rampPieces.push(p));
+  } else {
+    const occ = occupancyRamps([ramp], plate, lowerMode);
+    occ.forEach((r) => {
+      const sh = rampShape(r, plate);
+      (sh.pieces || []).forEach((p) => rampPieces.push(p));
+    });
+    if (!rampPieces.length && internal) (shape.pieces || []).forEach((p) => rampPieces.push(p));
+  }
   // 도로 쪽 벽 줄 없는 안(layoutRoadless): 가상 벽 줄 자리는 차로로 → 순환 차로가 실제 벽에 붙고 출입구와 이어짐
   let aisles = geo.aisles.concat((plate.extraAisles || []).map((a) => ({ ...a, role: "ring", phase: "loop", portals: [] })));
-  if ((ramp.placement || "internal") === "internal") {
+  if (internal || (modSite && (modSite.block || []).length)) {
     aisles = aisles.flatMap((aisle) => rampPieces.reduce((parts, piece) => parts.flatMap((part) => cutBlock(part, piece, "internal")), [aisle]));
   }
-  const approaches = [].concat(approachAisle(ramp, plate), rampEntryAisle(ramp, plate) || []);
+  const approaches = modSite
+    ? keepClear.map((z) => ({ ...z, role: "approach", phase: "loop", portals: [] }))
+    : [].concat(approachAisle(ramp, plate), rampEntryAisle(ramp, plate) || []);
   // 도착 자리 안에 완전히 들어가는 차로 조각은 도착 자리와 같은 공간이므로 지운다.
   aisles = aisles.filter((aisle) => !approaches.some((approach) => aisle.x >= approach.x - 0.01 && aisle.y >= approach.y - 0.01
     && aisle.x + aisle.w <= approach.x + approach.w + 0.01 && aisle.y + aisle.d <= approach.y + approach.d + 0.01));
@@ -1826,12 +1992,13 @@ function layoutCore(input) {
   });
   stampPortals(aisles, openings, ramp, plate);
 
-  const fixedBlocks = cores.concat(internal ? rampPieces : [], blockRects);
+  const fixedBlocks = cores.concat(internal || (modSite && rampPieces.length) ? rampPieces : [], blockRects);
   let stallBlocks = [];
   const stalls = [];
   const offBands = new Set();   // 시험으로 끈 주차 줄(빈자리 채우기와 겹치는 짧은 줄)
   const fillStalls = () => {
-    stallBlocks = aisles.concat(fixedBlocks);
+    // keepClear: 칸·코어 금지, 차로는 허용 → 칸 장애물에만 넣는다
+    stallBlocks = aisles.concat(fixedBlocks, keepClear);
     stalls.length = 0;
     bayStats.total = 0;
     bayStats.triple = 0;
@@ -2116,7 +2283,10 @@ function layoutCore(input) {
     }
     typedStalls = typedStalls.concat(extra);
   }
-  // 동 아래 금지 구역과 겹치는 칸은 최종에서 제거(어느 단계에서 새어도 막음).
+  // keepClear·동 아래 금지 구역과 겹치는 칸은 최종에서 제거
+  if (keepClear.length) {
+    typedStalls = typedStalls.filter((stall) => !keepClear.some((z) => overlapArea(stall, z) > 0.05));
+  }
   if (blockRects.length) {
     typedStalls = typedStalls.filter((stall) => !blockRects.some((b) => overlapArea(stall, b) > 0.05));
     // 막은 구역에 걸린 장애인 칸이 빠지면 동별 분배가 깨지므로, 남은 칸으로 유형을 다시 붙인다.
@@ -2151,14 +2321,23 @@ function layoutCore(input) {
   });
   const adj = buildGraph(aisles);
   const issues = [];
-  issues.push(...portalIssues(aisles, openings, [ramp], plate));
+  if (modSite) {
+    issues.push(...modulePortalIssues(aisles, keepClear, modSite));
+    issues.push(...moduleSlopeIssues(ramp, plate));
+    issues.push(...moduleSiteIssues(ramp, plate));
+    (modSite.issues || []).filter((i) => i.level === "error").forEach((i) => {
+      issues.push({ type: "ramp", label: i.text });
+    });
+  } else {
+    issues.push(...portalIssues(aisles, openings, [ramp], plate));
+    issues.push(...slopeIssues([ramp], plate));
+    issues.push(...siteIssues([ramp], plate));
+  }
   // 모든 차로가 하나로 이어져야 한다: 주 동선(가장 큰 덩어리)과 끊긴 차로 조각이 있으면 오류.
   const aisleGroups = componentGroups(aisles).sort((a, b) => b.length - a.length);
   const isolatedAisles = aisleGroups.slice(1).reduce((sum, group) => sum + group.length, 0);
   if (isolatedAisles > 0) issues.push({ type: "network", label: `주 동선과 이어지지 않는 차로 ${isolatedAisles}곳이 있습니다.` });
   if (prunedAisles > 0) issues.push({ type: "notice", label: `주 동선과 끊긴 차로 ${prunedAisles}곳${prunedStalls ? `과 그 차로만 보던 주차칸 ${prunedStalls}대` : ""}를 뺐습니다(들어갈 수 없는 자리).` });
-  issues.push(...slopeIssues([ramp], plate));
-  issues.push(...siteIssues([ramp], plate));
   issues.push(...roadIssues([ramp], plate));
   if (shape.fallbackFrom === "spiral" && shape.reason) {
     issues.push({ type: "notice", label: shape.reason });
@@ -4014,24 +4193,34 @@ function layoutWithGap(input) {
   const c = edgeGap(raw);
   if (!c) return layoutParkingInner(input);
   const plate = innerPlateOf(raw, c);
-  // blockRects도 안쪽 평면 좌표로 옮긴다(안 옮기면 칸이 블록 안으로 새어 나온다).
+  // blockRects·keepClear도 안쪽 평면 좌표로 옮긴다(안 옮기면 칸이 블록 안으로 새어 나온다).
+  const shiftClip = (list) => (Array.isArray(list) ? list.map((b) => {
+    const x0 = Math.max(0, b.x - c);
+    const y0 = Math.max(0, b.y - c);
+    const x1 = Math.min(plate.width, b.x - c + b.w);
+    const y1 = Math.min(plate.depth, b.y - c + b.d);
+    if (x1 - x0 < 0.05 || y1 - y0 < 0.05) return null;
+    return { ...b, x: round3(x0), y: round3(y0), w: round3(x1 - x0), d: round3(y1 - y0) };
+  }).filter(Boolean) : []);
   if (Array.isArray(raw.blockRects) && raw.blockRects.length) {
-    plate.blockRects = raw.blockRects.map((b) => {
-      const x0 = Math.max(0, b.x - c);
-      const y0 = Math.max(0, b.y - c);
-      const x1 = Math.min(plate.width, b.x - c + b.w);
-      const y1 = Math.min(plate.depth, b.y - c + b.d);
-      if (x1 - x0 < 0.05 || y1 - y0 < 0.05) return null;
-      return { ...b, x: round3(x0), y: round3(y0), w: round3(x1 - x0), d: round3(y1 - y0) };
-    }).filter(Boolean);
+    plate.blockRects = shiftClip(raw.blockRects);
   }
+  if (Array.isArray(raw.keepClear) && raw.keepClear.length) {
+    plate.keepClear = shiftClip(raw.keepClear);
+  }
+  // 모듈 사슬 좌표(x,y)도 안쪽 평면으로
+  const shiftRampModules = (r) => {
+    if (!r || !Array.isArray(r.modules) || !r.modules.length) return r;
+    if (r.x == null || r.y == null) return r;
+    return { ...r, x: round3(r.x - c), y: round3(r.y - c) };
+  };
   const alongOf = (edge) => (edge === "n" || edge === "s" ? plate.width : plate.depth);
   const inEdge = (item) => (item && item.edge ? { ...item, t: round3(clamp(item.t - c, (item.width || 0) / 2, alongOf(item.edge) - (item.width || 0) / 2)) } : item);
   const inner = {
     ...input,
     plate,
     cores: (input.cores || []).map((core) => ({ ...core, x: round3(core.x - c), y: round3(core.y - c) })),
-    ramps: input.ramps ? input.ramps.map(inEdge) : input.ramps,
+    ramps: input.ramps ? input.ramps.map((r) => shiftRampModules(inEdge(r))) : input.ramps,
     openings: input.openings ? input.openings.map(inEdge) : input.openings,
   };
   const res = layoutParkingInner(inner);
@@ -4041,12 +4230,19 @@ function layoutWithGap(input) {
   out.gridX = (res.gridX || []).map((v) => round3(v + c));
   out.gridY = (res.gridY || []).map((v) => round3(v + c));
   const outEdge = (item) => (item && item.edge ? { ...item, t: round3(item.t + c) } : item);
-  out.ramps = (res.ramps || []).map(outEdge);
+  out.ramps = (res.ramps || []).map((r) => {
+    const e = outEdge(r);
+    if (!e || !Array.isArray(e.modules) || e.x == null || e.y == null) return e;
+    return { ...e, x: round3(e.x + c), y: round3(e.y + c) };
+  });
   out.openings = (res.openings || []).map(outEdge);
-  // blockRects는 원본(바깥) 좌표로 되돌린다.
+  // blockRects·keepClear는 원본(바깥) 좌표로 되돌린다.
   const outerBlocks = Array.isArray(raw.blockRects) ? raw.blockRects.slice()
     : (res.plate.blockRects || []).map((b) => ({ ...b, x: round3(b.x + c), y: round3(b.y + c) }));
-  out.plate = { ...res.plate, inner: false, width: raw.width, depth: raw.depth, edgeGap: c, blockRects: outerBlocks, buildings: raw.buildings || res.plate.buildings };
+  const outerKeep = Array.isArray(raw.keepClear) ? raw.keepClear.slice()
+    : (res.plate.keepClear || []).map((b) => ({ ...b, x: round3(b.x + c), y: round3(b.y + c) }));
+  out.plate = { ...res.plate, inner: false, width: raw.width, depth: raw.depth, edgeGap: c, blockRects: outerBlocks, keepClear: outerKeep, buildings: raw.buildings || res.plate.buildings };
+  out.keepClear = outerKeep;
   // ㎡/대·차로비는 진짜 평면 넓이 기준으로
   const f = (raw.width * raw.depth) / (plate.width * plate.depth);
   if (res.metrics) out.metrics = { ...res.metrics, areaPerStall: round2m(res.metrics.areaPerStall * f), aisleRatio: round3(res.metrics.aisleRatio / f) };

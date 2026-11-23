@@ -4,7 +4,7 @@
  * layout.js와 순환 import를 피하려고 상수·겹침 계산은 여기에 둔다.
  * 근거·목표: docs/redesign/redesign-plan.md
  */
-import { assignStallTypes, stallRuleTargets, tallyStallTypes } from "./stallTypes.js?v=271";
+import { assignStallTypes, stallRuleTargets, tallyStallTypes } from "./stallTypes.js?v=272";
 
 const AISLE = 6;
 const STALL_W = 2.5;
@@ -581,9 +581,10 @@ function frontClear(stall, aisles) {
   return true;
 }
 
-function fillStalls(aisles, towers, cores, columns, plate, Sd, spacing, bayFrom) {
+function fillStalls(aisles, towers, cores, columns, plate, Sd, spacing, bayFrom, keepClear = []) {
   const stalls = [];
-  const blocks = [].concat(towers || [], cores || [], columns || [], aisles || []);
+  // keepClear는 칸·코어 금지(차로는 허용) → 장애물로만 넣고 차로 절단에는 안 씀
+  const blocks = [].concat(towers || [], cores || [], columns || [], aisles || [], keepClear || []);
   const minClear = plate.minClear == null ? 0 : plate.minClear;
   const xs = bayXs(plate, spacing, bayFrom, Sd);
   const cw = plate.columnWidth || COLUMN;
@@ -811,21 +812,31 @@ export function layoutLoopFirst(input, spec = {}) {
   const plate0 = input.plate;
   if (!plate0) return null;
   const ramp0 = (input.ramps || [])[0];
-  if (!ramp0 || (ramp0.placement || "internal") !== "external") return null;
+  if (!ramp0) return null;
+  const allowInternal = Boolean(input.allowInternalModule);
+  if ((ramp0.placement || "internal") !== "external" && !allowInternal) return null;
+
+  const extraObs = (input.obstacles || []).slice();
+  const keepClear0 = (input.keepClear || plate0.keepClear || []).slice();
 
   const axis = spec.axis || "x";
+  const flipKeep = (zs) => (axis === "y" ? zs.map((z) => flipRect(z)) : zs.map((z) => ({ ...z })));
   const working = axis === "y"
     ? {
       plate: flipPlate(plate0),
-      towers: (input.towers || input.plate.blockRects || []).map((t) => flipRect(t)),
+      towers: (input.towers || input.plate.blockRects || []).map((t) => flipRect(t))
+        .concat(extraObs.map((t) => flipRect(t))),
       cores: (input.cores || []).map((c) => flipRect(c)),
-      ramp: { ...ramp0, edge: flipEdge(ramp0.edge), t: ramp0.t },
+      ramp: { ...ramp0, edge: flipEdge(ramp0.edge), t: ramp0.t, placement: "external" },
+      keepClear: flipKeep(keepClear0),
     }
     : {
       plate: plate0,
-      towers: (input.towers || input.plate.blockRects || []).map((t) => ({ ...t })),
+      towers: (input.towers || input.plate.blockRects || []).map((t) => ({ ...t }))
+        .concat(extraObs.map((t) => ({ ...t }))),
       cores: (input.cores || []).map((c) => ({ ...c })),
-      ramp: { ...ramp0 },
+      ramp: { ...ramp0, placement: "external" },
+      keepClear: keepClear0.map((z) => ({ ...z })),
     };
 
   const plate = working.plate;
@@ -834,11 +845,24 @@ export function layoutLoopFirst(input, spec = {}) {
   const towers = working.towers;
   const cores = working.cores;
   const ramp = working.ramp;
+  const keepClear = working.keepClear;
 
   const frame = buildFrame(plate, Sd, spec);
   let aisles = frame.aisles.slice();
   const entry = entryCorridor(ramp, plate, aisles);
   if (entry) aisles.push(entry);
+  // 내부·걸침 모듈만 keepClear를 차로로 넣어 도착·진입이 순환과 이어지게 한다.
+  // 외부형은 entryCorridor만 쓰고(기존과 대수 맞춤), keepClear는 칸 금지로만 쓴다.
+  if (allowInternal) {
+    keepClear.forEach((z) => {
+      if (!z || !(z.w > 0.5 && z.d > 0.5)) return;
+      aisles.push({
+        x: z.x, y: z.y, w: z.w, d: z.d,
+        role: "approach", phase: "loop", portals: [],
+        along: z.w >= z.d ? "x" : "y",
+      });
+    });
+  }
 
   aisles = mergeAisles(cutAll(aisles, towers.concat(cores)));
 
@@ -935,14 +959,14 @@ export function layoutLoopFirst(input, spec = {}) {
   }
 
   let columns = placeColumns(aisles, towers, plate, spacing, Sd, spec.bayFrom || "w");
-  let stalls = fillStalls(aisles, towers, cores, columns, plate, Sd, spacing, spec.bayFrom || "w");
+  let stalls = fillStalls(aisles, towers, cores, columns, plate, Sd, spacing, spec.bayFrom || "w", keepClear);
 
   // 쓸모없는 짧은 차로 정리 후 재채움
   const pruned = pruneUselessAisles(aisles, stalls, towers);
   if (pruned.length < aisles.length) {
     aisles = mergeAisles(pruned);
     columns = placeColumns(aisles, towers, plate, spacing, Sd, spec.bayFrom || "w");
-    stalls = fillStalls(aisles, towers, cores, columns, plate, Sd, spacing, spec.bayFrom || "w");
+    stalls = fillStalls(aisles, towers, cores, columns, plate, Sd, spacing, spec.bayFrom || "w", keepClear);
   }
 
   let loopsClosed = 0;
@@ -982,7 +1006,7 @@ export function layoutLoopFirst(input, spec = {}) {
           if (!path.length) continue;
           const trial = mergeAisles(aisles.concat(path));
           const cols2 = placeColumns(trial, towers, plate, spacing, Sd, spec.bayFrom || "w");
-          const stalls2 = fillStalls(trial, towers, cores, cols2, plate, Sd, spacing, spec.bayFrom || "w");
+          const stalls2 = fillStalls(trial, towers, cores, cols2, plate, Sd, spacing, spec.bayFrom || "w", keepClear);
           const lost = stalls.length - stalls2.length;
           const spans0 = longSpanCount(columns);
           const tips2 = deadEndTips(trial);
@@ -1000,16 +1024,25 @@ export function layoutLoopFirst(input, spec = {}) {
     }
   }
 
+  // keepClear와 겹치는 칸은 최종에서도 제거
+  if (keepClear.length) {
+    stalls = stalls.filter((s) => !keepClear.some((z) => overlapArea(s, z) > 0.05));
+  }
   const typed = assignTypes(stalls, plate0, cores, towers, ramp);
   stalls = typed.stalls;
+  if (keepClear.length) {
+    stalls = stalls.filter((s) => !keepClear.some((z) => overlapArea(s, z) > 0.05));
+  }
   const counts = typed.counts || tallyStallTypes(stalls, typed.targets).counts;
   const targets = typed.targets;
   const shortages = typed.shortages || [];
 
   const groupsFinal = aisleComponentsFixed(aisles);
   const connected = groupsFinal.length <= 1;
-  const coreAccess = towers.map((t) => towerAccessOk(t, aisles));
-  const accessOk = !towers.length || coreAccess.every(Boolean);
+  // 타워 접근은 원래 동만(모듈 장애물 제외)
+  const towerOnly = (input.towers || input.plate.blockRects || []).map((t) => (axis === "y" ? flipRect(t) : { ...t }));
+  const coreAccess = towerOnly.map((t) => towerAccessOk(t, aisles));
+  const accessOk = !towerOnly.length || coreAccess.every(Boolean);
   let overlapCount = 0;
   for (let i = 0; i < stalls.length; i += 1) {
     for (let j = i + 1; j < stalls.length; j += 1) {
@@ -1019,6 +1052,13 @@ export function layoutLoopFirst(input, spec = {}) {
     if (overlapsAny(stalls[i], towers, 0.05)) overlapCount += 1;
     if (overlapsAny(stalls[i], columns, 0.05)) overlapCount += 1;
   }
+  // keepClear 구역이 큰 차로 묶음과 닿는지
+  const mainIdx = groupsFinal[0] || [];
+  const mainAisles = mainIdx.map((i) => aisles[i]);
+  const zoneTouch = keepClear.map((z) => ({
+    role: z.role,
+    ok: mainAisles.some((a) => overlapArea(a, z) > 0.4),
+  }));
   const unreachable = stalls.filter((s) => !frontClear(s, aisles)).length;
   const extOk = (counts.extended || 0) >= (targets.extended || 0);
   const disOk = (counts.disabled || 0) >= (targets.disabled || 0);
@@ -1030,10 +1070,11 @@ export function layoutLoopFirst(input, spec = {}) {
     stalls,
     aisles,
     columns,
-    towers,
+    towers: towerOnly,
     cores,
     plate,
     ramp,
+    keepClear,
     links,
     loopsClosed,
     spec: { ...spec, engine: "loopFirst", axis },
@@ -1052,6 +1093,7 @@ export function layoutLoopFirst(input, spec = {}) {
       longSpans,
       stallTypes: counts,
       stallTargets: targets,
+      zoneTouch,
       valid,
       rejected: valid ? null : [
         !connected ? "동선 끊김" : null,
@@ -1064,7 +1106,10 @@ export function layoutLoopFirst(input, spec = {}) {
     },
   };
 
-  if (axis === "y") result = transposeResult(result, plate0);
+  if (axis === "y") {
+    result = transposeResult(result, plate0);
+    result.keepClear = (result.keepClear || keepClear).map((z) => flipRect(z));
+  }
   return result;
 }
 

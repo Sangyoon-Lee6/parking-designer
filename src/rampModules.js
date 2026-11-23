@@ -438,6 +438,36 @@ export function rectsClose(a, b, eps = 0.05) {
     && Math.abs(a.d - b.d) <= eps;
 }
 
+/**
+ * 사슬이 legacy를 다시 migrate한 결과와 같으면 true.
+ * shape는 곡선 옮기기용(없으면 직선으로만 비교).
+ */
+export function isLegacyEquivalent(ramp, plate, shape = null) {
+  if (!ramp?.legacy || !plate) return false;
+  if (!Array.isArray(ramp.modules) || !ramp.modules.length) return false;
+  try {
+    const fresh = migrateLegacy(ramp.legacy, plate, shape);
+    const a = buildChain(ramp);
+    const b = buildChain(fresh);
+    if (a.modules.length !== b.modules.length) return false;
+    if (Math.abs(a.total - b.total) > 0.1) return false;
+    return a.modules.every((m, i) => {
+      const o = b.modules[i];
+      if (m.type !== o.type) return false;
+      return (m.rects || []).every((r, j) => rectsClose(r, o.rects[j], 0.05));
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
+/** 모듈 사슬 경로를 엔진·3D에 쓸지(예전과 다르거나 legacy가 없을 때). */
+export function usesModuleLayout(ramp, plate, shape = null) {
+  if (!ramp || !Array.isArray(ramp.modules) || !ramp.modules.length) return false;
+  if (!ramp.legacy) return true;
+  return !isLegacyEquivalent(ramp, plate, shape);
+}
+
 /** analyzeOnPlate 결과로 edge/t/placement를 맞춘다. mixed는 엔진용 internal + mixed 표시. */
 export function applyPlateMeta(ramp, plate, opts = {}) {
   const site = analyzeOnPlate(ramp, plate, opts);

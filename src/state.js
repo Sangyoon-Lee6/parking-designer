@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=271";
+import { calculateDemand, emptyDemand } from "./demand.js?v=272";
 import {
   basementCount,
   bestLayoutFor,
@@ -18,13 +18,12 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=271";
+} from "./layout.js?v=272";
 import {
   applyPlateMeta,
-  buildChain,
+  isLegacyEquivalent as modulesLegacyEq,
   migrateLegacy,
-  rectsClose,
-} from "./rampModules.js?v=271";
+} from "./rampModules.js?v=272";
 
 export const state = {
   step: 1,
@@ -279,23 +278,9 @@ export function ensureModules(ramp, plate) {
 /** 사슬이 legacy를 다시 migrate한 결과와 같으면 true → 엔진·3D는 예전 경로 사용. */
 export function isLegacyEquivalent(ramp, plate) {
   if (!ramp?.legacy || !plate) return false;
-  if (!Array.isArray(ramp.modules) || !ramp.modules.length) return false;
-  try {
-    let shape = null;
-    try { shape = rampShape(ramp.legacy, plate); } catch (e) { shape = null; }
-    const fresh = migrateLegacy(ramp.legacy, plate, shape);
-    const a = buildChain(ramp);
-    const b = buildChain(fresh);
-    if (a.modules.length !== b.modules.length) return false;
-    if (Math.abs(a.total - b.total) > 0.1) return false;
-    return a.modules.every((m, i) => {
-      const o = b.modules[i];
-      if (m.type !== o.type) return false;
-      return (m.rects || []).every((r, j) => rectsClose(r, o.rects[j], 0.05));
-    });
-  } catch (e) {
-    return false;
-  }
+  let shape = null;
+  try { shape = rampShape(ramp.legacy, plate); } catch (e) { shape = null; }
+  return modulesLegacyEq(ramp, plate, shape);
 }
 
 function ensureStateRamps() {

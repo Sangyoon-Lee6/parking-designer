@@ -23,7 +23,7 @@ const cases = [
 
 import * as R from "../src/rampModules.js";
 
-const L = await import("../src/layout.js?v=271");
+const L = await import("../src/layout.js?v=272");
 const out = [];
 const opts = { floorHeight: plate.floorHeight, legalStalls: plate.legalStalls };
 let fails = 0;
@@ -96,7 +96,7 @@ for (const old of samples) {
 
 // ensureModules → isLegacyEquivalent (sweep 입력 램프와 같은 형태)
 console.log("\n[L] ensureModules / isLegacyEquivalent");
-const { ensureModules, isLegacyEquivalent } = await import("../src/state.js?v=271");
+const { ensureModules, isLegacyEquivalent } = await import("../src/state.js?v=272");
 const len112 = L.minStraightRampLength(3.2, L.rampTransitions({ legalStalls: 112 }));
 const sweepLike = [];
 for (const edge of ["w", "e", "s", "n"]) {
@@ -127,6 +127,82 @@ for (const old of sweepLike) {
   const m = ensureModules({ ...old }, p);
   expect(!!m.modules?.length && !!m.legacy, `${label} modules+legacy`);
   expect(isLegacyEquivalent(m, p), `${label} isLegacyEquivalent`);
+}
+
+// 배치 엔진: 모듈 사슬 장애물·keepClear (단지형 차로 먼저)
+console.log("\n[P] 엔진 keepClear·block (A/B/C/E/F)");
+const engineCases = cases.filter((c) => "ABCEF".includes(c.key));
+const baseTowers = towers.map((t) => ({ ...t }));
+let eRef = null;
+for (const c of engineCases) {
+  let ramp = c.ramp;
+  if (c.key === "G") continue;
+  const site = R.analyzeOnPlate(ramp, plate, { ...opts, blocks: baseTowers });
+  const input = {
+    plate: { ...plate, blockRects: baseTowers, buildings: baseTowers.map((t, i) => ({ id: i + 1, name: t.name, x: t.x, y: t.y, w: t.w, d: t.d })) },
+    towers: baseTowers,
+    cores: [],
+    ramps: [ramp],
+    openings: [],
+    rampPlacement: site.placement === "external" ? "external" : "internal",
+    spec: { engine: "loopFirst", axis: "x" },
+  };
+  const res = L.layoutParking(input);
+  const stalls = res?.stalls || [];
+  const aisles = res?.aisles || [];
+  const kc = res?.keepClear || site.keepClear || [];
+  const blocks = site.block || [];
+  const ov = (a, b) => {
+    const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const h = Math.min(a.y + a.d, b.y + b.d) - Math.max(a.y, b.y);
+    return w > 0 && h > 0 ? w * h : 0;
+  };
+  const stallInBlock = stalls.filter((s) => blocks.some((b) => ov(s, b) > 0.05)).length;
+  const aisleInBlock = aisles.filter((a) => blocks.some((b) => ov(a, b) > 0.05)).length;
+  const stallInKeep = stalls.filter((s) => kc.some((z) => ov(s, z) > 0.05)).length;
+  // 엔진 modulePortalIssues와 같이: 가장 큰 차로 묶음과 0.4㎡ 이상 겹침
+  const nA = aisles.length;
+  const parent = [...Array(nA).keys()];
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (let i = 0; i < nA; i += 1) for (let j = i + 1; j < nA; j += 1) {
+    if (ov(aisles[i], aisles[j]) > 0.05) {
+      const a = find(i); const b = find(j); if (a !== b) parent[b] = a;
+    }
+  }
+  const groups = new Map();
+  for (let i = 0; i < nA; i += 1) {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(i);
+  }
+  const main = [...groups.values()].sort((a, b) => b.length - a.length)[0] || [];
+  const mainAisles = main.map((i) => aisles[i]);
+  const zoneTouch = res?.metrics?.zoneTouch;
+  const zonesOk = kc.length === 0
+    || (Array.isArray(zoneTouch) && zoneTouch.length === kc.length && zoneTouch.every((z) => z.ok))
+    || kc.every((z) => mainAisles.some((a) => ov(a, z) > 0.4) || aisles.some((a) => ov(a, z) > 0.4));
+  const n = stalls.length;
+  console.log(`  [${c.key}] ${n}대 · body칸 ${stallInBlock} 차로 ${aisleInBlock} · keep칸 ${stallInKeep} · 구역연결 ${zonesOk} · loop=${!!res?.loopFirst}`);
+  expect(stallInBlock === 0 && aisleInBlock === 0, `${c.key} 램프 몸체 안 칸·차로 0`);
+  expect(stallInKeep === 0, `${c.key} keepClear 안 칸 0`);
+  expect(zonesOk, `${c.key} keepClear 구역이 차로와 닿음`);
+  if (c.key === "E") eRef = n;
+}
+// E와 같은 위치의 예전 외부 램프 대수 비교
+{
+  const old = { id: 1, edge: "w", t: 10, width: 6, length: 21.5, placement: "external" };
+  const res = L.layoutParking({
+    plate: { ...plate, blockRects: baseTowers, buildings: baseTowers.map((t, i) => ({ id: i + 1, name: t.name, x: t.x, y: t.y, w: t.w, d: t.d })) },
+    towers: baseTowers,
+    cores: [],
+    ramps: [old],
+    openings: [],
+    rampPlacement: "external",
+    spec: { engine: "loopFirst", axis: "x" },
+  });
+  const n = (res?.stalls || []).length;
+  console.log(`  [E-legacy] ${n}대 (모듈 E ${eRef}대)`);
+  expect(eRef != null && Math.abs(n - eRef) <= 10, `E 모듈≈예전 외부 램프 (±10): ${eRef} vs ${n}`);
 }
 
 console.log(`\n실패 ${fails}개`);
