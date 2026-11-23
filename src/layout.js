@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=266";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=267";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,7 +6,7 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=266";
+} from "./rampForms.js?v=267";
 
 export {
   lowerFloorRamp,
@@ -14,7 +14,7 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=266";
+} from "./rampForms.js?v=267";
 
 /**
  * 주차장법 시행규칙 제3조·제6조. 확인 2026-11-08. law.go.kr
@@ -1542,8 +1542,17 @@ function layoutCore(input) {
     }
     cores.push(placed);
   });
-  // 코어가 램프(도착 앞 6m 포함)와 겹쳐 옆으로 밀렸으면 알림으로 남긴다(배치는 정상 진행).
-  const movedCores = cores.map((core, i) => (Math.abs(core.x - coresIn[i].x) > 0.05 || Math.abs(core.y - coresIn[i].y) > 0.05 ? i : -1)).filter((i) => i >= 0);
+  // 실제로 램프 상자에서 밀린 코어 vs 격자 맞춤으로만 옮긴 코어를 구분한다.
+  const rampMovedCores = [];
+  const snapMovedCores = [];
+  cores.forEach((core, i) => {
+    const dx = Math.abs(core.x - coresIn[i].x);
+    const dy = Math.abs(core.y - coresIn[i].y);
+    if (dx <= 0.05 && dy <= 0.05) return;
+    const movedByRamp = rampBox && overlapArea(coresIn[i], rampBox) > 0.01;
+    if (movedByRamp) rampMovedCores.push(i);
+    else snapMovedCores.push({ i, dist: round1(Math.hypot(dx, dy)) });
+  });
 
   const bay = stallsPerBay(plate.spacing, plate.columnWidth, plate.minClear);
   const bayStats = { total: 0, triple: 0 };
@@ -1576,15 +1585,25 @@ function layoutCore(input) {
     if (sharesRamp(opening, ramp)) return;
     aisles.push(entryAisle(opening, plate));
   });
-  cores.forEach((core) => {
-    aisles = applyCore(aisles, core, plate, internal ? rampPieces : [rampFootprint(ramp, plate)]);
-  });
   // 코어가 램프에서 밀린 뒤 동 외곽(blockUnder)을 다시 계산한다.
   let blockRects = plate.blockRects || [];
   if (plate.buildings && plate.buildings.length) {
     blockRects = towerBlockRects(plate.buildings, cores, plate);
     plate.blockRects = blockRects;
   }
+  // 격자 맞춤으로 동 외곽 밖으로 나온 코어는 동 안쪽으로 다시 넣는다.
+  cores.forEach((core, i) => {
+    if ((core.kind || "building") === "stair" || core.buildingId == null) return;
+    const block = blockRects.find((b) => b.buildingId === core.buildingId);
+    if (!block) return;
+    const next = clampRectInside(core, block);
+    if (next) cores[i] = next;
+  });
+  // 우회로는 다른 코어·동과 겹치지 않게 막는다.
+  cores.forEach((core, i) => {
+    const others = cores.filter((_, j) => j !== i).concat(blockRects);
+    aisles = applyCore(aisles, core, plate, internal ? rampPieces : [rampFootprint(ramp, plate)], others);
+  });
   // 동 아래 금지 구역: 차로를 잘라 내고(큰 U턴 우회는 순환을 끊을 수 있어 쓰지 않음),
   // 로비 접근용 차로 띠를 동 외곽 한쪽에 붙인다.
   blockRects.forEach((b) => {
@@ -1962,13 +1981,23 @@ function layoutCore(input) {
   const columnHits = stallColumnHits(stalls, columns, plate.minClear);
   if (columnHits > 0) issues.push({ type: "column", label: `주차칸-기둥 충돌 ${columnHits}건` });
   typed.shortages.forEach((label) => issues.push({ type: "stallType", label }));
-  const minAisleWidth = aisles.length ? Math.min(...aisles.map((aisle) => Math.min(aisle.w, aisle.d))) : 0;
-  if (aisles.length && minAisleWidth < AISLE_MIN) issues.push({ type: "network", label: `차로 폭 ${round1(minAisleWidth)}m 구간이 있습니다 (6m 이상 필요).` });
+  // 진행 방향에 수직인 폭으로 잰다. 짧은 토막의 min(w,d)를 폭으로 오인하지 않음.
+  const widthAisles = aisles.filter((a) => a.role !== "approach" && a.role !== "entry" && a.role !== "trim");
+  const minAisleWidth = widthAisles.length ? Math.min(...widthAisles.map(aisleTravelWidth)) : 0;
+  if (widthAisles.length && minAisleWidth < AISLE_MIN) {
+    issues.push({ type: "aisleWidth", label: `차로 폭 ${round1(minAisleWidth)}m 구간이 있습니다 (6m 이상 필요).` });
+  }
   const deadEnds = deadEndCount(aisles, adj);
   const overlapCount = countOverlaps({ stalls, aisles, columns }, cores, internal ? rampPieces : [], plate);
   if (overlapCount > 0) issues.push({ type: "overlap", label: `주차칸·차로·기둥·코어·램프가 겹치는 곳 ${overlapCount}곳` });
   if (!stalls.length) issues.push({ type: "empty", label: "주차칸이 하나도 들어가지 않습니다(평면이 너무 작거나 코어·램프가 자리를 다 차지함)." });
-  movedCores.forEach((i) => issues.push({ type: "notice", label: `${cores.length > 1 ? `코어 ${i + 1}` : "코어"}가 램프(도착 앞 6m 포함)와 겹쳐 옆으로 옮겼습니다.` }));
+  rampMovedCores.forEach((i) => {
+    issues.push({ type: "notice", label: `${cores.length > 1 ? `코어 ${i + 1}` : "코어"}가 램프(도착 앞 6m 포함)와 겹쳐 옆으로 옮겼습니다.` });
+  });
+  snapMovedCores.forEach(({ i, dist }) => {
+    issues.push({ type: "notice", label: `${cores.length > 1 ? `코어 ${i + 1}` : "코어"}을 기둥 격자에 맞춰 ${dist}m 옮김.` });
+  });
+  const aisleWidthOk = !issues.some((issue) => issue.type === "aisleWidth");
   const connected = !issues.some((issue) => issue.type === "opening" || issue.type === "ramp" || issue.type === "network");
   const slopeOk = !issues.some((issue) => issue.type === "slope");
   const siteOk = !issues.some((issue) => issue.type === "site");
@@ -1978,8 +2007,8 @@ function layoutCore(input) {
   const tripleRatio = bayStats.total ? bayStats.triple / bayStats.total : 0;
   const hasLoop = ["s", "n", "w", "e"].every((side) => aisles.some((aisle) => aisle.role === "ring" && aisle.side === side));
   const similarity = Math.round(clamp(perimeterRatio, 0, 1) * 40 + (hasLoop ? 30 : 0) + clamp(tripleRatio, 0, 1) * 30);
-  const valid = connected && columnHits === 0 && slopeOk && overlapCount === 0 && stalls.length > 0;
-  const rejected = valid ? null : rejectReason({ connected, columnHits, slopeOk, siteOk, overlapCount });
+  const valid = connected && aisleWidthOk && columnHits === 0 && slopeOk && overlapCount === 0 && stalls.length > 0;
+  const rejected = valid ? null : rejectReason({ connected, aisleWidthOk, columnHits, slopeOk, siteOk, overlapCount });
   return {
     moduleGrid: moduleUsed,
     stalls,
@@ -2038,6 +2067,7 @@ function layoutCore(input) {
 function rejectReason(flags) {
   const reasons = [];
   if (!flags.connected) reasons.push("동선 끊김");
+  if (flags.aisleWidthOk === false) reasons.push("차로 폭 부족");
   if (flags.columnHits > 0 || flags.overlapCount > 0) reasons.push("충돌");
   if (!flags.slopeOk) reasons.push("경사 초과");
   if (!flags.siteOk) reasons.push("대지 밖");
@@ -2460,12 +2490,20 @@ function cutBlock(aisle, block, role) {
 }
 
 function durable(part, aisle) {
+  // 진행 방향 2.5m 미만 토막은 버린다. (예전 2m은 동 모서리 2~4m 토막을 남김)
+  // 폭 판정은 aisleTravelWidth로 따로 하므로, 여기 임계를 6m로 올리면 단일 건물 연결이 과도하게 끊긴다.
   const horizontal = aisle.w + 0.01 >= aisle.d;
-  if (horizontal) return part.d >= AISLE_MIN && part.w >= 2;
-  return part.w >= AISLE_MIN && part.d >= 2;
+  if (horizontal) return part.d >= AISLE_MIN && part.w >= 2.5;
+  return part.w >= AISLE_MIN && part.d >= 2.5;
 }
 
-function applyCore(aisles, core, plate, rampBoxes) {
+/** 차로의 진행 방향에 수직인 폭(가로 차로 → d, 세로 차로 → w). */
+function aisleTravelWidth(aisle) {
+  if (!aisle) return 0;
+  return aisle.w + 0.01 >= aisle.d ? aisle.d : aisle.w;
+}
+
+function applyCore(aisles, core, plate, rampBoxes, otherBlocks = []) {
   const next = [];
   aisles.forEach((aisle) => {
     if (overlapArea(aisle, core) < 0.04) {
@@ -2477,13 +2515,14 @@ function applyCore(aisles, core, plate, rampBoxes) {
     parts.forEach((part, index) => {
       next.push({ ...aisle, ...part, portals: index === 0 ? (aisle.portals || []) : [] });
     });
-    detourFor(aisle, core, plate, rampBoxes).forEach((piece) => next.push(piece));
+    detourFor(aisle, core, plate, rampBoxes, otherBlocks).forEach((piece) => next.push(piece));
   });
   return next;
 }
 
-function detourFor(aisle, core, plate, rampBoxes) {
+function detourFor(aisle, core, plate, rampBoxes, otherBlocks = []) {
   const boxes = [].concat(rampBoxes || []);
+  const blockers = [].concat(otherBlocks || []).filter((b) => b && b !== core);
   const horizontal = aisle.w + 0.01 >= aisle.d;
   const sides = horizontal ? ["n", "s"] : ["e", "w"];
   for (let index = 0; index < sides.length; index += 1) {
@@ -2493,6 +2532,8 @@ function detourFor(aisle, core, plate, rampBoxes) {
     if (pieces.length < 3) continue;
     if (pieces.some((piece) => overlapArea(piece, core) > 0.04)) continue;
     if (pieces.some((piece) => boxes.some((box) => overlapArea(piece, box) > 0.4))) continue;
+    // 다른 코어·동 외곽과 겹치면 그 쪽 우회로는 쓰지 않는다.
+    if (pieces.some((piece) => blockers.some((b) => overlapArea(piece, b) > 0.4))) continue;
     return pieces.map((piece) => ({ ...piece, role: "bypass", phase: "bypass", portals: [] }));
   }
   return [];
@@ -3283,7 +3324,8 @@ function coreAccessIssues(cores, aisles, blockRects, plate) {
       ? (blockRects || []).find((b) => b.buildingId === core.buildingId)
       : null;
     const target = block || core;
-    const touches = (aisles || []).some((a) => rectGap(target, a) < 0.3);
+    // 동 외곽(또는 코어) 면에 차로가 3m 이상 닿아야 접근으로 본다.
+    const touches = (aisles || []).some((a) => contactLength(target, a) >= 3 - 0.05);
     if (touches) return;
     if (kind === "stair") {
       stairNo += 1;
@@ -3291,7 +3333,7 @@ function coreAccessIssues(cores, aisles, blockRects, plate) {
     } else if (plate && plate.buildings) {
       const b = plate.buildings.find((x) => x.id === core.buildingId);
       const name = (b && b.name) || `코어 ${index + 1}`;
-      issues.push({ type: "network", label: `${name}이 차로와 닿지 않습니다.` });
+      issues.push({ type: "network", label: `${name} 코어에 닿는 차로가 없습니다.` });
     } else if (cores.length > 1) {
       issues.push({ type: "network", label: `코어 ${index + 1}이 차로와 닿지 않습니다.` });
     } else {
@@ -3299,6 +3341,16 @@ function coreAccessIssues(cores, aisles, blockRects, plate) {
     }
   });
   return issues;
+}
+
+/** 사각형을 컨테이너 안으로 밀어 넣는다(크기 유지). 넣을 수 없으면 null. */
+function clampRectInside(rect, box) {
+  if (!rect || !box) return null;
+  if (rect.w > box.w + 0.05 || rect.d > box.d + 0.05) return null;
+  const x = clamp(rect.x, box.x, box.x + box.w - rect.w);
+  const y = clamp(rect.y, box.y, box.y + box.d - rect.d);
+  if (Math.abs(x - rect.x) < 0.01 && Math.abs(y - rect.y) < 0.01) return null;
+  return { ...rect, x: round3(x), y: round3(y) };
 }
 
 export function overlapArea(a, b) {
