@@ -1,11 +1,11 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=267";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=267";
-import { drawThumb, mountPlan } from "./plan.js?v=267";
-import { stallRuleTargets } from "./stallTypes.js?v=267";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=267";
-import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=267";
-import { bindContextDialog, closeContext, openContext, openSitePicker, updatePickerMarker } from "./context.js?v=267";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=267";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=269";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=269";
+import { drawThumb, mountPlan } from "./plan.js?v=269";
+import { stallRuleTargets } from "./stallTypes.js?v=269";
+import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=269";
+import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=269";
+import { bindContextDialog, closeContext, openContext, openSitePicker, updatePickerMarker } from "./context.js?v=269";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, coreLabel, currentStallRules, demandResult, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, removeBuilding, removeSelection, selectCore, selectItem, selectedOpening, selectedRamp, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=269";
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -614,7 +614,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=267")
+    sceneMount = import("./scene.js?v=269")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -1087,11 +1087,16 @@ function renderCompare() {
     const tags = [
       variant.recommended ? '<span class="tag">추천</span>' : "",
       variant.maxStalls ? '<span class="tag max">최대 주차칸</span>' : "",
+      variant.complex || variant.loopFirst ? '<span class="tag">단지형</span>' : "",
       variant.uniform ? '<span class="tag uniform">방향 통일</span>' : "",
       variant.coreSide ? '<span class="tag uniform">장애인 코어 인접</span>' : "",
       variant.coreRamp ? '<span class="tag uniform">코어 램프 인접</span>' : "",
     ].filter(Boolean).join(" ");
-    button.innerHTML = `<p>${tags ? `${tags} ` : ""}${variant.id} ${variant.name}<br>${metrics.stalls}대 · ${metrics.areaPerStall.toFixed(1)}㎡/대${isReference() ? ` · 유사 ${metrics.similarity}` : ""}<br>${metrics.connected ? "연결" : "끊김"} · 충돌 ${metrics.columnHits} · 막다른 ${metrics.deadEnds}${metrics.valid ? "" : ` · 탈락 ${metrics.rejected}`}</p>`;
+    const access = Array.isArray(metrics.coreAccess)
+      ? ` · 동 접근 ${metrics.coreAccess.map((ok, i) => `${i + 1}${ok ? "✓" : "✗"}`).join(" ")}`
+      : "";
+    const links = metrics.links ? ` · 연결 ${metrics.links}` : "";
+    button.innerHTML = `<p>${tags ? `${tags} ` : ""}${variant.id} ${variant.name}<br>${metrics.stalls}대 · ${metrics.areaPerStall.toFixed(1)}㎡/대${isReference() ? ` · 유사 ${metrics.similarity}` : ""}<br>${metrics.connected ? "연결" : "끊김"} · 충돌 ${metrics.columnHits} · 막다른 ${metrics.deadEnds}${access}${links}${metrics.valid ? "" : ` · 탈락 ${metrics.rejected}`}</p>`;
     button.prepend(canvas);
     button.addEventListener("click", () => applyVariant(index));
     dock.appendChild(button);

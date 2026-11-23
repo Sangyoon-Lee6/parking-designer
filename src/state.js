@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=267";
+import { calculateDemand, emptyDemand } from "./demand.js?v=269";
 import {
   basementCount,
   bestLayoutFor,
@@ -17,7 +17,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=267";
+} from "./layout.js?v=269";
 
 export const state = {
   step: 1,
@@ -282,7 +282,7 @@ function appendTransferNotes() {
   });
 }
 
-export function refreshVariants() {
+export function refreshVariants(quick = false) {
   if (!state.plate) return;
   state.variants = generateVariants({
     plate: state.plate,
@@ -292,6 +292,7 @@ export function refreshVariants() {
     rampPlacement: state.rampPlacement,
     entranceMode: state.entranceMode,
     circulation: state.circulation,
+    quick: Boolean(quick),
   });
 }
 
@@ -333,6 +334,7 @@ export function optimizeLayout() {
     circulation: state.circulation,
     lockRamp: true,
     noCoreRescue: true,
+    spec: state.spec && state.spec.engine === "loopFirst" ? state.spec : undefined,
   });
   if (best) {
     adopt(best, true);

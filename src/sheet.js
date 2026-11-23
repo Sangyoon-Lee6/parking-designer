@@ -1,4 +1,4 @@
-import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint, siteMarginsOf } from "./layout.js?v=267";
+import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint, siteMarginsOf } from "./layout.js?v=269";
 
 const EDGE = { n: "북", e: "동", s: "남", w: "서" };
 

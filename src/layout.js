@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=267";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=269";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,7 +6,8 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=267";
+} from "./rampForms.js?v=269";
+import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=269";
 
 export {
   lowerFloorRamp,
@@ -14,7 +15,8 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=267";
+} from "./rampForms.js?v=269";
+export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=269";
 
 /**
  * 주차장법 시행규칙 제3조·제6조. 확인 2026-11-08. law.go.kr
@@ -1105,8 +1107,161 @@ export function rampPositionCheck(plate, placement, floorHeight) {
   return out;
 }
 
+/** 동이 1개 이상이고 외부 램프면 단지형 차로 먼저 엔진을 쓴다. */
+export function complexMode(input) {
+  const plate = input?.plate || {};
+  const blocks = plate.blockRects || [];
+  const buildings = plate.buildings || [];
+  const towers = input.towers || [];
+  const ramp = (input.ramps || [])[0];
+  const placement = ramp?.placement || input.rampPlacement || "internal";
+  return placement === "external" && (blocks.length > 0 || buildings.length > 0 || towers.length > 0);
+}
+
+function complexInputOf(input) {
+  const plate = input.plate || {};
+  const towers = (input.towers && input.towers.length)
+    ? input.towers
+    : (plate.blockRects && plate.blockRects.length)
+      ? plate.blockRects
+      : towerBlockRects(plate.buildings || [], input.cores || [], plate);
+  return {
+    plate: { ...plate, blockRects: towers },
+    towers,
+    cores: input.cores || [],
+    ramps: input.ramps || [],
+  };
+}
+
+/**
+ * 차로 먼저 엔진 결과를 state.adopt / 비교 카드가 쓰는 형태로 맞춘다.
+ */
+export function loopFirstResult(input, c) {
+  if (!c || !c.metrics) return null;
+  const plate = normalizePlate(input.plate || c.plate);
+  const ramp0 = (input.ramps || [])[0] || c.ramp;
+  const ramp = ramp0 ? { ...ramp0, placement: ramp0.placement || "external" } : defaultRamp(plate, "external");
+  const cores = (c.cores && c.cores.length ? c.cores : input.cores || []).map((core) => ({ ...core }));
+  const openings = buildOpenings(
+    { ...input, entranceMode: "integrated", rampPlacement: "external" },
+    plate,
+    ramp,
+    "integrated",
+  );
+  const aisles = (c.aisles || []).map((a) => ({
+    ...a,
+    phase: a.phase || (a.role === "link" ? "bypass" : "loop"),
+    portals: [],
+  }));
+  // 입구·램프 포털을 차로에 찍어 portalIssues/buildArrows가 기존 엔진과 같게 동작하게 한다.
+  stampPortals(aisles, openings, ramp, plate);
+  const stalls = (c.stalls || []).map((s, i) => ({ ...s, no: i + 1 }));
+  const columns = (c.columns || []).map((col) => ({ ...col }));
+  const drives = buildArrows(plate, aisles, openings, ramp, "ccw", false);
+  const route = drives.map((seg) => ({ x: seg.x1, y: seg.y1 }))
+    .concat(drives.length ? [{ x: drives[drives.length - 1].x2, y: drives[drives.length - 1].y2 }] : []);
+
+  const issues = [];
+  issues.push(...portalIssues(aisles, openings, [ramp], plate));
+  issues.push(...siteIssues([ramp], plate));
+  issues.push(...roadIssues([ramp], plate));
+  const blockRects = plate.blockRects || c.towers || [];
+  issues.push(...coreAccessIssues(cores, aisles, blockRects, plate));
+  (c.metrics.coreAccess || []).forEach((ok, i) => {
+    if (ok) return;
+    const t = (c.towers || blockRects)[i];
+    const name = (t && t.name) || (plate.buildings && plate.buildings[i] && plate.buildings[i].name) || `동${i + 1}`;
+    if (!issues.some((x) => x.label && x.label.includes(name))) {
+      issues.push({ type: "network", label: `${name} 코어에 닿는 차로가 없습니다.` });
+    }
+  });
+  const columnHits = stallColumnHits(stalls, columns, plate.minClear == null ? 0.05 : plate.minClear);
+  if (columnHits > 0) issues.push({ type: "column", label: `주차칸-기둥 충돌 ${columnHits}건` });
+  const overlapCount = countOverlaps({ stalls, aisles, columns }, cores, [], plate);
+  if (overlapCount > 0) issues.push({ type: "overlap", label: `주차칸·차로·기둥·코어·램프가 겹치는 곳 ${overlapCount}곳` });
+  const types = c.metrics.stallTypes || tallyStallTypes(stalls, c.metrics.stallTargets || stallRuleTargets(plate.stallRules)).counts;
+  const targets = c.metrics.stallTargets || stallRuleTargets({ ...(plate.stallRules || {}), placedStalls: stalls.length });
+  const shortages = c.metrics.shortages || tallyStallTypes(stalls, targets).shortages;
+  shortages.forEach((label) => issues.push({ type: "stallType", label }));
+  if ((c.metrics.longSpans || 0) > 0) {
+    issues.push({ type: "span", label: `기둥 간격 12m 초과 ${c.metrics.longSpans}곳` });
+  }
+  if ((c.metrics.deadEnds || 0) > 0) {
+    issues.push({ type: "notice", label: `막다른 차로 끝 ${c.metrics.deadEnds}곳` });
+  }
+  if (!stalls.length) issues.push({ type: "empty", label: "주차칸이 하나도 들어가지 않습니다." });
+
+  const connected = !issues.some((issue) => issue.type === "opening" || issue.type === "ramp" || issue.type === "network")
+    && (c.metrics.connected !== false);
+  const slopeOk = true;
+  const siteOk = !issues.some((issue) => issue.type === "site");
+  const plateArea = plate.width * plate.depth;
+  const aisleRatio = c.metrics.aisleRatio != null
+    ? c.metrics.aisleRatio
+    : (plateArea ? round3(aisles.reduce((s, a) => s + a.w * a.d, 0) / plateArea) : 0);
+  const valid = Boolean(c.metrics.valid) && connected && columnHits === 0 && overlapCount === 0 && stalls.length > 0 && siteOk;
+  const axis = (c.spec && c.spec.axis) || "x";
+  const gridX = [...new Set(columns.map((col) => round3(col.x + col.w / 2)))].sort((a, b) => a - b);
+  const gridY = [...new Set(columns.map((col) => round3(col.y + col.d / 2)))].sort((a, b) => a - b);
+  const spec = { ...(c.spec || {}), engine: "loopFirst", axis };
+
+  return {
+    stalls,
+    aisles,
+    columns,
+    drives,
+    route,
+    issues,
+    connected,
+    axis,
+    fixedAlong: axis === "x" ? "가로" : "세로",
+    flexAlong: axis === "x" ? "세로" : "가로",
+    gridX,
+    gridY,
+    cores,
+    openings,
+    ramps: [ramp],
+    plate: { ...plate, blockRects },
+    spec,
+    bay: null,
+    columnConflicts: [],
+    clearance: clearanceMark(stalls, columns),
+    complex: true,
+    loopFirst: true,
+    metrics: {
+      stalls: stalls.length,
+      areaPerStall: stalls.length ? round3(plateArea / stalls.length) : 0,
+      aisleRatio,
+      connected,
+      columnHits,
+      deadEnds: c.metrics.deadEnds || 0,
+      similarity: 0,
+      overlapCount,
+      isolatedAisles: c.metrics.isolatedAisles || 0,
+      slopeOk,
+      siteOk,
+      valid,
+      stallTypes: types,
+      stallTargets: targets,
+      rejected: valid ? null : (c.metrics.rejected || rejectReason({
+        connected, aisleWidthOk: true, columnHits, slopeOk, siteOk, overlapCount,
+      })),
+      coreAccess: c.metrics.coreAccess,
+      links: c.metrics.links || 0,
+      loopsClosed: c.metrics.loopsClosed || 0,
+      longSpans: c.metrics.longSpans || 0,
+      shortages,
+    },
+  };
+}
+
 export function generateVariants(input) {
-  const specs = variantSpecs(input.rampPlacement || input.ramps?.[0]?.placement || "internal");
+  const placement = input.rampPlacement || input.ramps?.[0]?.placement || "internal";
+  let specs = variantSpecs(placement);
+  // 단지형에서는 기존 엔진을 가로·세로 최고안 두 개만 돌려 속도를 맞춘다.
+  if (complexMode(input)) {
+    specs = specs.filter((s, i) => i < 2);
+  }
   const variants = specs.map((spec, index) => {
     const result = layoutParking({ ...input, spec });
     return {
@@ -1116,6 +1271,44 @@ export function generateVariants(input) {
       spec,
     };
   });
+
+  // 단지형: 차로 먼저 엔진 안을 같은 비교 목록에 넣는다.
+  if (complexMode(input)) {
+    try {
+      const { best, loop } = layoutComplex(complexInputOf(input), { quick: Boolean(input.quick) });
+      const add = (raw, label) => {
+        const converted = loopFirstResult(input, raw);
+        if (!converted) return;
+        // 같은 평면(대수·막다른·축)이면 하나만
+        const dup = variants.some((v) => (
+          v.loopFirst
+          && v.metrics.stalls === converted.metrics.stalls
+          && v.metrics.deadEnds === converted.metrics.deadEnds
+          && v.spec?.axis === converted.spec?.axis
+        ));
+        if (dup) return;
+        const axisLabel = converted.spec?.axis === "y" ? "세로 줄" : "가로 줄";
+        variants.push({
+          ...converted,
+          id: `V${variants.length + 1}`,
+          name: `단지형 차로 먼저 · ${label} (${axisLabel})`,
+          recommended: false,
+          maxStalls: false,
+          complex: true,
+          loopFirst: true,
+        });
+      };
+      if (best) add(best, "대수 우선");
+      if (loop && loop !== best) add(loop, "순환 우선");
+      else if (loop && best && (
+        loop.metrics.stalls !== best.metrics.stalls
+        || loop.metrics.deadEnds !== best.metrics.deadEnds
+      )) add(loop, "순환 우선");
+    } catch (e) {
+      // 단지형 엔진 실패 시 기존 안만 유지
+    }
+  }
+
   const ranked = variants.map((variant, index) => ({ variant, index }));
   ranked.sort((a, b) => compareVariants(a.variant, b.variant));
   const best = ranked.find((item) => item.variant.metrics.valid);
@@ -1228,6 +1421,11 @@ export function layoutParking(input) {
   // 매번 처음부터 계산하도록 지운다(안 지우면 다시 그릴 때마다 5.2m씩 벽 쪽으로 밀려 대지 밖으로 나감).
   if (input.ramps && input.ramps.some((r) => r && r.inset != null)) {
     input = { ...input, ramps: input.ramps.map((r) => { if (!r || r.inset == null) return r; const { inset, ...rest } = r; return rest; }) };
+  }
+  if (input.spec && input.spec.engine === "loopFirst" && complexMode(input)) {
+    const raw = layoutLoopFirst(complexInputOf(input), input.spec);
+    const converted = loopFirstResult(input, raw);
+    if (converted) return converted;
   }
   const res = layoutWithGap(input);
   if (res.metrics.valid || input.noCoreRescue) return res;
@@ -3220,6 +3418,20 @@ export function bestLayoutFor(input) {
     });
     if (!best || scoreLayout(result) > scoreLayout(best)) best = result;
   });
+  if (complexMode(input) && input.spec?.engine === "loopFirst") {
+    const raw = layoutLoopFirst(complexInputOf(input), input.spec);
+    const converted = loopFirstResult(input, raw);
+    if (converted && (!best || scoreLayout(converted) > scoreLayout(best))) best = converted;
+  } else if (complexMode(input)) {
+    // 코어·램프를 옮긴 뒤 재탐색: 단지형 안도 후보에 넣는다.
+    try {
+      const { best: cBest, loop } = layoutComplex(complexInputOf(input));
+      [cBest, loop].filter(Boolean).forEach((raw) => {
+        const converted = loopFirstResult(input, raw);
+        if (converted && (!best || scoreLayout(converted) > scoreLayout(best))) best = converted;
+      });
+    } catch (e) { /* ignore */ }
+  }
   return best;
 }
 

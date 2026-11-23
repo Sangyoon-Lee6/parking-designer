@@ -1,22 +1,34 @@
 /**
  * 단지형 전용 "차로 먼저"(loop-first) 배치 엔진.
  * 외부 램프 + 직사각형 평면만 다룬다. 그 외는 null → 기존 layout.js 사용.
+ * layout.js와 순환 import를 피하려고 상수·겹침 계산은 여기에 둔다.
  * 근거·목표: docs/redesign/redesign-plan.md
  */
-import {
-  AISLE,
-  STALL_W,
-  STALL_D_EXTENDED,
-  STALL_D_GENERAL,
-  COLUMN,
-  overlapArea,
-  rectGap,
-} from "./layout.js?v=267";
-import { assignStallTypes, stallRuleTargets, tallyStallTypes } from "./stallTypes.js?v=267";
+import { assignStallTypes, stallRuleTargets, tallyStallTypes } from "./stallTypes.js?v=269";
 
+const AISLE = 6;
+const STALL_W = 2.5;
+const STALL_D_GENERAL = 5;
+const STALL_D_EXTENDED = 5.2;
+const COLUMN = 0.5;
 const MIN_PART = 2.5;
 const ACCESS_LEN = 3;
 const EPS = 0.05;
+
+function overlapArea(a, b) {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.d, b.y + b.d) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+function rectGap(a, b) {
+  const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const oy = Math.min(a.y + a.d, b.y + b.d) - Math.max(a.y, b.y);
+  if (ox > 0 && oy > 0) return 0;
+  const dx = ox > 0 ? 0 : -ox;
+  const dy = oy > 0 ? 0 : -oy;
+  return Math.hypot(dx, dy);
+}
 
 function round1(v) { return Math.round(v * 10) / 10; }
 function round3(v) { return Math.round(v * 1000) / 1000; }
@@ -1069,19 +1081,24 @@ function alignOffsets(plate, towers, Sd) {
   return [...offsets].filter((v) => Number.isFinite(v));
 }
 
-export function complexCandidates(input) {
+export function complexCandidates(input, opts = {}) {
   if (!input?.plate) return [];
   const ramp = (input.ramps || [])[0];
   if (!ramp || (ramp.placement || "internal") !== "external") return [];
+  const quick = Boolean(opts.quick);
   const Sd = stallDepthOf(input.plate);
   const towers = input.towers || input.plate.blockRects || [];
   const aligns = alignOffsets(input.plate, towers, Sd);
-  const slacks = ["start", "end", "mid", ...aligns.slice(0, 4)];
+  const slacks = quick
+    ? ["start", "end", ...aligns.slice(0, 2)]
+    : ["start", "end", "mid", ...aligns.slice(0, 3)];
+  const bayFroms = quick ? ["w"] : ["w", "e"];
+  const deltas = quick ? [0] : [0, -1];
   const specs = [];
   for (const axis of ["x", "y"]) {
-    for (const nDelta of [0, -1]) {
+    for (const nDelta of deltas) {
       for (const slack of slacks) {
-        for (const bayFrom of ["w", "e"]) {
+        for (const bayFrom of bayFroms) {
           specs.push({ axis, nDelta, slack, bayFrom, closeLoops: false, goal: "count" });
         }
       }
@@ -1105,18 +1122,20 @@ export function complexCandidates(input) {
     return b.metrics.stalls - a.metrics.stalls;
   });
 
+  if (quick) return raw.slice(0, 6);
+
   const refined = [];
-  raw.slice(0, 4).forEach((r) => {
+  raw.slice(0, 3).forEach((r) => {
     refined.push(layoutLoopFirst(input, { ...r.spec, closeLoops: true, loopLoss: 3, goal: "count" }));
   });
-  raw.slice(0, 3).forEach((r) => {
+  raw.slice(0, 2).forEach((r) => {
     refined.push(layoutLoopFirst(input, { ...r.spec, closeLoops: true, loopLoss: 8, goal: "loop" }));
   });
   return refined.filter(Boolean).concat(raw).filter(Boolean);
 }
 
-export function layoutComplex(input) {
-  const list = complexCandidates(input);
+export function layoutComplex(input, opts = {}) {
+  const list = complexCandidates(input, opts);
   if (!list.length) return { best: null, loop: null, list: [] };
   const pass = list.filter((r) => r.metrics?.valid);
   const pool = pass.length ? pass : list;
