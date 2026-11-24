@@ -1,29 +1,33 @@
 /**
- * AutoCAD DXF AC1015 (2000) ASCII 내보내기.
+ * AutoCAD DXF(AC1015) → DWG(R2000) 내보내기.
  * 단위: 평면 m. unitScale — mm면 ×1000.
  * 한글: \U+XXXX 이스케이프, 스타일 malgun.ttf.
+ * 레이어별 ACI 색으로 기둥·코어·주차칸 종류를 구분한다.
  */
-import { closedRing, polygonFromPlate } from "./polygon.js?v=277";
-import { rampFootprint, rampShape, siteMarginsOf } from "./layout.js?v=277";
-import { buildChain } from "./rampModules.js?v=277";
+import { closedRing, polygonFromPlate } from "./polygon.js?v=281";
+import { rampFootprint, rampShape, siteMarginsOf } from "./layout.js?v=281";
+import { buildChain } from "./rampModules.js?v=281";
 
+/** [name, ACI color, linetype] — 색은 모두 다르게 (주차 종류·기둥·코어 구분) */
 const LAYERS = [
-  ["PD-PLATE", 7, "CONTINUOUS"],
-  ["PD-SETBACK", 8, "DASHED"],
-  ["PD-AISLE", 2, "CONTINUOUS"],
-  ["PD-ARROW", 2, "CONTINUOUS"],
-  ["PD-STALL", 4, "CONTINUOUS"],
-  ["PD-STALL-EXT", 3, "CONTINUOUS"],
-  ["PD-STALL-ACC", 5, "CONTINUOUS"],
-  ["PD-STALL-EV", 6, "CONTINUOUS"],
-  ["PD-STALL-PAR", 4, "CONTINUOUS"],
-  ["PD-COLUMN", 8, "CONTINUOUS"],
-  ["PD-CORE", 1, "CONTINUOUS"],
-  ["PD-TOWER", 9, "CONTINUOUS"],
-  ["PD-RAMP", 30, "CONTINUOUS"],
-  ["PD-DIM", 7, "CONTINUOUS"],
-  ["PD-TEXT", 7, "CONTINUOUS"],
+  ["PD-PLATE", 253, "CONTINUOUS"],     // 거의 검 — 외곽
+  ["PD-SETBACK", 9, "DASHED"],         // 연회 — 이격
+  ["PD-AISLE", 8, "CONTINUOUS"],       // 진회 — 차로
+  ["PD-ARROW", 150, "CONTINUOUS"],     // 하늘 — 동선
+  ["PD-STALL", 4, "CONTINUOUS"],       // 청록 — 일반 주차
+  ["PD-STALL-EXT", 3, "CONTINUOUS"],   // 초록 — 확장형
+  ["PD-STALL-ACC", 5, "CONTINUOUS"],   // 파랑 — 장애인
+  ["PD-STALL-EV", 30, "CONTINUOUS"],   // 주황 — 친환경
+  ["PD-STALL-PAR", 6, "CONTINUOUS"],   // 자홍 — 평행
+  ["PD-COLUMN", 250, "CONTINUOUS"],    // 진회 — 기둥
+  ["PD-CORE", 1, "CONTINUOUS"],        // 빨강 — 코어
+  ["PD-TOWER", 211, "CONTINUOUS"],     // 분홍 — 타워
+  ["PD-RAMP", 40, "CONTINUOUS"],       // 노랑 — 램프
+  ["PD-DIM", 142, "CONTINUOUS"],       // 청회 — 치수
+  ["PD-TEXT", 7, "CONTINUOUS"],        // 흰/검 — 문자
 ];
+
+const LAYER_COLOR = Object.fromEntries(LAYERS.map(([n, c]) => [n, c]));
 
 const STALL_LAYER = {
   general: "PD-STALL",
@@ -34,6 +38,10 @@ const STALL_LAYER = {
 };
 
 function r3(v) { return Math.round(Number(v) * 1000) / 1000; }
+
+function layerColor(layer) {
+  return LAYER_COLOR[layer] ?? 7;
+}
 
 /** 한글·비ASCII → DXF \U+XXXX */
 export function dxfText(str) {
@@ -58,7 +66,8 @@ function lwpoly(layer, pts, closed = true, scale = 1) {
     && Math.hypot(ring[0].x - ring[ring.length - 1].x, ring[0].y - ring[ring.length - 1].y) < 1e-6
     ? ring.slice(0, -1)
     : ring;
-  let s = pair(0, "LWPOLYLINE") + pair(8, layer) + pair(90, verts.length) + pair(70, closed ? 1 : 0);
+  let s = pair(0, "LWPOLYLINE") + pair(8, layer) + pair(62, layerColor(layer))
+    + pair(90, verts.length) + pair(70, closed ? 1 : 0);
   verts.forEach((p) => {
     s += pair(10, r3(p.x * scale)) + pair(20, r3(p.y * scale));
   });
@@ -66,13 +75,13 @@ function lwpoly(layer, pts, closed = true, scale = 1) {
 }
 
 function line(layer, x1, y1, x2, y2, scale = 1) {
-  return pair(0, "LINE") + pair(8, layer)
+  return pair(0, "LINE") + pair(8, layer) + pair(62, layerColor(layer))
     + pair(10, r3(x1 * scale)) + pair(20, r3(y1 * scale))
     + pair(11, r3(x2 * scale)) + pair(21, r3(y2 * scale));
 }
 
 function text(layer, x, y, h, str, scale = 1, align = 0) {
-  let s = pair(0, "TEXT") + pair(8, layer)
+  let s = pair(0, "TEXT") + pair(8, layer) + pair(62, layerColor(layer))
     + pair(10, r3(x * scale)) + pair(20, r3(y * scale))
     + pair(40, r3(h * scale))
     + pair(1, dxfText(str))
@@ -82,23 +91,9 @@ function text(layer, x, y, h, str, scale = 1, align = 0) {
   return s;
 }
 
-function hatchSolidProper(layer, verts, scale, pattern = "SOLID") {
-  let s = pair(0, "HATCH") + pair(8, layer) + pair(2, pattern === "SOLID" ? "SOLID" : pattern);
-  s += pair(70, pattern === "SOLID" ? 1 : 0) + pair(71, 0) + pair(91, 1) + pair(92, 1) + pair(93, verts.length);
-  for (let i = 0; i < verts.length; i += 1) {
-    const a = verts[i];
-    const b = verts[(i + 1) % verts.length];
-    s += pair(72, 1)
-      + pair(10, r3(a.x * scale)) + pair(20, r3(a.y * scale))
-      + pair(11, r3(b.x * scale)) + pair(21, r3(b.y * scale));
-  }
-  s += pair(97, 0);
-  if (pattern !== "SOLID") {
-    s += pair(75, 0) + pair(76, 1) + pair(52, 45) + pair(41, 1) + pair(77, 0) + pair(78, 1)
-      + pair(53, 45) + pair(43, 0) + pair(44, 0) + pair(45, -0.707) + pair(46, 0.707) + pair(79, 0);
-  }
-  s += pair(98, 1) + pair(10, r3(verts[0].x * scale)) + pair(20, r3(verts[0].y * scale));
-  return s;
+/** 기둥 등은 닫힌 폴리라인만 쓴다(HATCH는 일부 CAD에서 로드 실패). */
+function filledRect(layer, r, scale) {
+  return lwpoly(layer, rectPts(r), true, scale);
 }
 
 function rectPts(r) {
@@ -175,6 +170,11 @@ function dxfTables() {
   return s;
 }
 
+function dxfBlocks() {
+  // AC1015 호환: 빈 BLOCKS 섹션(일부 CAD가 ENTITIES만 있으면 거부)
+  return pair(0, "SECTION") + pair(2, "BLOCKS") + pair(0, "ENDSEC");
+}
+
 /**
  * @param {object} state
  * @param {object} info summary-like
@@ -225,9 +225,7 @@ export function buildDxf(state, info = {}, opts = {}) {
     });
 
     (state.columns || []).forEach((col) => {
-      const pts = rectPts(shiftR(col));
-      entities += lwpoly("PD-COLUMN", pts, true, scale);
-      entities += hatchSolidProper("PD-COLUMN", pts, scale, "SOLID");
+      entities += filledRect("PD-COLUMN", shiftR(col), scale);
     });
 
     (state.cores || []).forEach((core) => {
@@ -239,9 +237,7 @@ export function buildDxf(state, info = {}, opts = {}) {
       if (!core || !b.tower) return;
       const tw = b.tower;
       const r = { x: core.x + (tw.dx || 0) + ox, y: core.y + (tw.dy || 0), w: tw.w, d: tw.d };
-      const pts = rectPts(r);
-      entities += lwpoly("PD-TOWER", pts, true, scale);
-      entities += hatchSolidProper("PD-TOWER", pts, scale, "ANSI31");
+      entities += lwpoly("PD-TOWER", rectPts(r), true, scale);
       entities += text("PD-TEXT", r.x + r.w / 2, r.y + r.d / 2, 0.8, b.name || "동", scale, 1);
     });
 
@@ -282,7 +278,8 @@ export function buildDxf(state, info = {}, opts = {}) {
       `배치 대수: ${info.placed ?? state.stalls?.length ?? 0}대`,
       `법정 대수: ${info.required ?? plate.legalStalls ?? 0}대`,
       `날짜: ${info.checkedOn || new Date().toISOString().slice(0, 10)}`,
-      `버전: ${opts.version || "r276"} · 단위 ${unit}`,
+      `버전: ${opts.version || "r281"} · 단위 ${unit}`,
+      "레이어: 기둥=PD-COLUMN · 코어=PD-CORE · 일반/확장/장애인/친환경/평행 주차칸 분리",
     ];
     title.forEach((t, i) => {
       entities += text("PD-TEXT", ox, -6 - i * 1.2, 0.6, t, scale, 0);
@@ -293,27 +290,42 @@ export function buildDxf(state, info = {}, opts = {}) {
   const ys = poly.map((p) => p.y);
   const meta = {
     layers: LAYERS.map((l) => l[0]),
+    layerColors: Object.fromEntries(LAYERS.map(([n, c]) => [n, c])),
     stallEntities: stallCount,
     plateClosed: true,
     bounds: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) },
     poly,
   };
 
-  const dxf = dxfHeader(unit) + dxfTables()
+  const dxf = dxfHeader(unit) + dxfTables() + dxfBlocks()
     + pair(0, "SECTION") + pair(2, "ENTITIES") + entities + pair(0, "ENDSEC")
     + pair(0, "EOF");
   return { dxf, meta, stallCount, unit, scale };
 }
 
-export function dxfFilename(state, floorIndex, allFloors) {
+export function cadFilename(state, floorIndex, allFloors, format = "dwg") {
   const v = state.variantIndex != null ? `V${state.variantIndex + 1}` : "plan";
   const floor = allFloors ? "all" : `B${(floorIndex ?? 0) + 1}`;
   const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  return `parking_${v}_${floor}_${day}.dxf`;
+  const ext = format === "dxf" ? "dxf" : "dwg";
+  return `parking_${v}_${floor}_${day}.${ext}`;
+}
+
+export function dxfFilename(state, floorIndex, allFloors) {
+  return cadFilename(state, floorIndex, allFloors, "dxf");
 }
 
 export function downloadDxf(filename, dxfString) {
   const blob = new Blob([dxfString], { type: "application/dxf" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename.endsWith(".dxf") ? filename : `${filename}.dxf`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+export function downloadBytes(filename, bytes, mime = "application/octet-stream") {
+  const blob = new Blob([bytes], { type: mime });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = filename;
@@ -321,4 +333,29 @@ export function downloadDxf(filename, dxfString) {
   URL.revokeObjectURL(a.href);
 }
 
-export { LAYERS, expandOutwardManual };
+/** DXF 문자열을 AutoCAD R2000 DWG 바이트로 변환 (nasjidwg). */
+export async function dxfToDwg(dxfString) {
+  const { readDxf, writeDwg2000 } = await import("../vendor/nasjidwg/dist/index.js");
+  const drawing = readDxf(dxfString);
+  const { data, skipped = [], downgraded = [] } = writeDwg2000(drawing);
+  if (!data?.byteLength) throw new Error("DWG 변환에 실패했습니다.");
+  return { data, skipped, downgraded, layers: (drawing.layers || []).map((l) => l.name) };
+}
+
+/**
+ * CAD 파일 다운로드. format: 'dwg'(기본) | 'dxf'
+ */
+export async function downloadCad(state, info = {}, opts = {}) {
+  const format = opts.format === "dxf" ? "dxf" : "dwg";
+  const built = buildDxf(state, info, opts);
+  const name = cadFilename(state, opts.floorIndex ?? 0, Boolean(opts.allFloors), format);
+  if (format === "dxf") {
+    downloadDxf(name, built.dxf);
+    return { ...built, filename: name, format };
+  }
+  const { data, skipped, downgraded } = await dxfToDwg(built.dxf);
+  downloadBytes(name, data, "application/acad");
+  return { ...built, filename: name, format, dwgBytes: data.byteLength, skipped, downgraded };
+}
+
+export { LAYERS, STALL_LAYER, LAYER_COLOR, expandOutwardManual };

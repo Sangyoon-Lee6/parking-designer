@@ -1,21 +1,21 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=280";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=280";
-import { drawThumb, mountPlan } from "./plan.js?v=280";
-import { stallRuleTargets } from "./stallTypes.js?v=280";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=281";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=281";
+import { drawThumb, mountPlan } from "./plan.js?v=281";
+import { stallRuleTargets } from "./stallTypes.js?v=281";
 import {
   plateDimsFromPolygon, presetChamferRect, presetL, presetTrapezoid, presetU,
   rectPolygon, validatePolygon, normalizePolygon, offsetPolygon, polygonArea, edgeLengths,
-} from "./polygon.js?v=280";
-import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=280";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, rampModuleInfo, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=280";
+} from "./polygon.js?v=281";
+import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=281";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, rampModuleInfo, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=281";
 
 // 시트·DXF·주변지도는 클릭 시에만 불러 초기 로딩을 줄인다.
 let sheetMod = null;
 let dxfMod = null;
 let contextMod = null;
-const loadSheet = () => (sheetMod ||= import("./sheet.js?v=280"));
-const loadDxf = () => (dxfMod ||= import("./dxfExport.js?v=280"));
-const loadContext = () => (contextMod ||= import("./context.js?v=280"));
+const loadSheet = () => (sheetMod ||= import("./sheet.js?v=281"));
+const loadDxf = () => (dxfMod ||= import("./dxfExport.js?v=281"));
+const loadContext = () => (contextMod ||= import("./context.js?v=281"));
 async function closeContext() {
   const m = await loadContext();
   return m.closeContext();
@@ -745,17 +745,32 @@ $("sheet-print").addEventListener("click", async () => {
 });
 $("sheet-dxf")?.addEventListener("click", async () => {
   if (!state.plate) return;
-  const { buildDxf, downloadDxf, dxfFilename } = await loadDxf();
-  const info = summary();
-  const unit = $("dxf-unit")?.value === "m" ? "m" : "mm";
-  const allFloors = Boolean($("dxf-all-floors")?.checked);
-  const { dxf } = buildDxf(state, { ...info, checkedOn: info.demand?.checkedOn || info.checkedOn }, {
-    unit,
-    floorIndex: sheetFloor(),
-    allFloors,
-    version: "r277",
-  });
-  downloadDxf(dxfFilename(state, sheetFloor(), allFloors), dxf);
+  const btn = $("sheet-dxf");
+  const prev = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = "내보내는 중…"; }
+  try {
+    const { downloadCad } = await loadDxf();
+    const info = summary();
+    const unit = $("dxf-unit")?.value === "m" ? "m" : "mm";
+    const format = $("dxf-format")?.value === "dxf" ? "dxf" : "dwg";
+    const allFloors = Boolean($("dxf-all-floors")?.checked);
+    await downloadCad(state, { ...info, checkedOn: info.demand?.checkedOn || info.checkedOn }, {
+      unit,
+      format,
+      floorIndex: sheetFloor(),
+      allFloors,
+      version: "r281",
+    });
+  } catch (e) {
+    alert(`CAD 내보내기 실패: ${e && e.message ? e.message : e}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = prev || "CAD 파일로 내보내기 (DWG)"; }
+  }
+});
+$("dxf-format")?.addEventListener("change", () => {
+  const fmt = $("dxf-format")?.value === "dxf" ? "DXF" : "DWG";
+  const btn = $("sheet-dxf");
+  if (btn && !btn.disabled) btn.textContent = `CAD 파일로 내보내기 (${fmt})`;
 });
 $("floor-picker").addEventListener("click", (event) => {
   const floor = event.target.dataset.floor;
@@ -807,7 +822,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=280")
+    sceneMount = import("./scene.js?v=281")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;

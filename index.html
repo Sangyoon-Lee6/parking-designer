@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=280" />
+    <link rel="stylesheet" href="styles.css?v=281" />
     <script type="importmap">
       {
         "imports": {
@@ -679,7 +679,13 @@
             <button id="sheet-print" type="button" class="ghost">A3 인쇄</button>
           </div>
           <div id="dxf-tools" class="split" hidden style="flex-wrap:wrap;gap:0.4rem;align-items:center;margin:0.35rem 0">
-            <button id="sheet-dxf" type="button" class="ghost">CAD 파일로 내보내기(DXF)</button>
+            <button id="sheet-dxf" type="button" class="ghost">CAD 파일로 내보내기 (DWG)</button>
+            <label class="tiny">형식
+              <select id="dxf-format">
+                <option value="dwg" selected>DWG</option>
+                <option value="dxf">DXF</option>
+              </select>
+            </label>
             <label class="tiny">단위
               <select id="dxf-unit">
                 <option value="mm" selected>mm</option>
@@ -687,6 +693,7 @@
               </select>
             </label>
             <label class="check tiny"><input id="dxf-all-floors" type="checkbox" /> 전 층 내보내기</label>
+            <p class="hint tiny" style="flex-basis:100%;margin:0">레이어: 기둥·코어·일반/확장/장애인/친환경/평행 주차칸 색 분리</p>
           </div>
           <button id="to-3d" type="button" class="primary" hidden>결과 보기</button>
           <button id="back-plan" type="button" class="ghost">코어 단계로</button>
@@ -715,7 +722,7 @@
     <button id="plan-expand-hit" type="button" hidden>expand</button>
     <button id="collapse-plan" type="button" hidden>접기</button>
 
-    <script type="module" src="src/main.js?v=280"></script>
+    <script type="module" src="src/main.js?v=281"></script>
     <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>
