@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=276";
+import { calculateDemand, emptyDemand } from "./demand.js?v=277";
 import {
   basementCount,
   bestLayoutFor,
@@ -19,7 +19,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=276";
+} from "./layout.js?v=277";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -33,7 +33,7 @@ import {
   slopePlan,
   analyzeOnPlate,
   buildChain,
-} from "./rampModules.js?v=276";
+} from "./rampModules.js?v=277";
 import {
   normalizePolygon,
   outsideBlockRects,
@@ -42,7 +42,7 @@ import {
   polygonFromPlate,
   rectPolygon,
   validatePolygon,
-} from "./polygon.js?v=276";
+} from "./polygon.js?v=277";
 
 export const state = {
   step: 1,
@@ -430,8 +430,9 @@ export function applyVariant(index) {
 /**
  * 램프·코어 위치를 유지한 채 배치안을 다시 돌려 최적 주차 배치를 고른다.
  * (베이 방향·packFrom 등 variantSpecs를 모두 비교)
+ * @param {{ refresh?: boolean }} [opts] refresh=false면 후보 목록(generateVariants)을 다시 돌리지 않는다.
  */
-export function optimizeLayout() {
+export function optimizeLayout({ refresh = true } = {}) {
   if (!state.plate) return;
   syncPlateMeta();
   if (state.siteType === "complex" && state.buildings.length) {
@@ -463,8 +464,8 @@ export function optimizeLayout() {
     adopt(best, true);
     state.spec = best.spec || state.spec;
   }
-  // UI 후보 목록도 갱신
-  refreshVariants();
+  // UI 후보 목록도 갱신(램프 형태만 바꿀 때는 생략해 응답을 빠르게)
+  if (refresh) refreshVariants();
 }
 
 export function rebuildLayout() {

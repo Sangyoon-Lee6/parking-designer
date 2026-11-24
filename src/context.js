@@ -1,7 +1,6 @@
 // 주변 매스 보기: 주소 조회 뒤 오른쪽에 지도를 띄우고, 드래그로 고른 영역의 필지·건물을
 // 2D(평면) 또는 3D(높이만큼 세운 매스)로 보여 준다. 지도는 Leaflet(전역 L) + 브이월드 WMTS 타일.
-import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+// Three.js·Leaflet은 필요할 때만 불러 초기 로딩을 줄인다.
 import {
   MAX_FEATURES,
   OSM_URL,
@@ -23,7 +22,7 @@ import {
   vworldDomain,
   vworldKey,
   zoneWmsLayers,
-} from "./zoning.js?v=276";
+} from "./zoning.js?v=277";
 
 const $ = (id) => document.getElementById(id);
 const MAX_SIDE = 1000;   // 영역 한 변 최대(m). 브이월드가 레이어당 1,000개까지만 준다.
@@ -36,6 +35,51 @@ let rect = null;       // 선택 영역 사각형
 let marker = null;
 let zoneOverlay = null;
 let zoneLegendEl = null;
+let THREE = null;
+let OrbitControls = null;
+let threePromise = null;
+let leafletPromise = null;
+
+function loadThree() {
+  if (THREE && OrbitControls) return Promise.resolve();
+  if (threePromise) return threePromise;
+  threePromise = Promise.all([
+    import("three"),
+    import("three/addons/controls/OrbitControls.js"),
+  ]).then(([threeMod, controlsMod]) => {
+    THREE = threeMod;
+    OrbitControls = controlsMod.OrbitControls;
+  });
+  return threePromise;
+}
+
+function loadLeaflet() {
+  if (typeof window !== "undefined" && window.L) return Promise.resolve(window.L);
+  if (leafletPromise) return leafletPromise;
+  leafletPromise = new Promise((resolve, reject) => {
+    if (!document.querySelector("link[data-leaflet-css]")) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "vendor/leaflet/leaflet.css";
+      link.dataset.leafletCss = "1";
+      document.head.appendChild(link);
+    }
+    const existing = document.querySelector("script[data-leaflet-js]");
+    if (existing) {
+      if (window.L) { resolve(window.L); return; }
+      existing.addEventListener("load", () => resolve(window.L));
+      existing.addEventListener("error", () => reject(new Error("Leaflet load failed")));
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "vendor/leaflet/leaflet.js";
+    script.dataset.leafletJs = "1";
+    script.onload = () => resolve(window.L);
+    script.onerror = () => reject(new Error("지도 라이브러리(Leaflet)를 불러오지 못했습니다"));
+    document.head.appendChild(script);
+  });
+  return leafletPromise;
+}
 
 // ── 데이터 → 로컬 m 좌표 ──
 function prepare(data, site) {
@@ -250,6 +294,7 @@ function groundTexture(model, onUpdate) {
   const g = canvas.getContext("2d");
   g.fillStyle = "#e9e2d4";
   g.fillRect(0, 0, canvas.width, canvas.height);
+  if (!THREE) return null;
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
@@ -280,8 +325,9 @@ function stop3d() {
   three = null;
 }
 
-function draw3d(model) {
+async function draw3d(model) {
   stop3d();
+  await loadThree();
   const box = $("context-3d");
   const w = box.clientWidth || 800;
   const h = box.clientHeight || 520;
@@ -461,8 +507,8 @@ function ensureZoneLegend() {
 
 // 왼쪽 드래그 = 영역 그리기(주변 매스) / 클릭 = 대지 선택(찾기 모드)
 // 오른쪽 드래그 = 지도 이동, 휠 = 확대·축소
-function ensureMap() {
-  const L = window.L;
+async function ensureMap() {
+  const L = await loadLeaflet();
   if (!L) throw new Error("지도 라이브러리(Leaflet)를 불러오지 못했습니다");
   if (map) return map;
   map = L.map("context-map", {
@@ -567,8 +613,8 @@ function ensureMap() {
 
 let siteLayer = null;
 let accessLayer = null;
-function showMap() {
-  const m = ensureMap();
+async function showMap() {
+  const m = await ensureMap();
   const L = window.L;
   const p = ctx.point;
   if (marker) marker.setLatLng([p.y, p.x]);
@@ -609,8 +655,12 @@ async function setMode(mode) {
     $("context-status").textContent = ctx?.pickMode
       ? `클릭 = 대지 선택 · 우클릭 드래그 = 이동 · 휠 = 확대/축소 (줌 ${ZONE_COLOR_ZOOM}+ 에서 용도지역 색)`
       : "왼쪽 드래그 = 영역 선택 · 오른쪽 드래그 = 지도 이동 · 휠 = 확대/축소 → 2D·3D로 보기 (한 변 최대 1km)";
-    showMap();
-    syncZoneOverlay();
+    try {
+      await showMap();
+      syncZoneOverlay();
+    } catch (e) {
+      $("context-status").textContent = `지도 불러오기 실패: ${e && e.message ? e.message : e}`;
+    }
     return;
   }
   $("context-status").textContent = "선택 영역의 필지·건물을 불러오는 중…";
@@ -623,7 +673,8 @@ async function setMode(mode) {
     const size = boxSize(b);
     const full = (data.buildings.length >= MAX_FEATURES || data.parcels.length >= MAX_FEATURES) ? ` · 자료가 ${MAX_FEATURES}개를 넘어 일부만 표시(영역을 줄여 보세요)` : "";
     $("context-status").textContent = `영역 ${Math.round(size.w)} × ${Math.round(size.d)}m · 필지 ${data.parcels.length}개 · 건물 ${model.buildings.length}동${full} · 높이 자료가 없으면 지상층수 × 층고(주거 3.0m · 업무·상업·교육 4.0m · 그 밖 3.3m) · 출처: 브이월드`;
-    if (mode === "2d") draw2d(model); else draw3d(model);
+    if (mode === "2d") draw2d(model);
+    else await draw3d(model);
   } catch (e) {
     $("context-status").textContent = `불러오기 실패: ${e && e.message ? e.message : e}`;
   }

@@ -3,9 +3,9 @@
  * 단위: 평면 m. unitScale — mm면 ×1000.
  * 한글: \U+XXXX 이스케이프, 스타일 malgun.ttf.
  */
-import { closedRing, polygonFromPlate } from "./polygon.js?v=276";
-import { rampFootprint, rampShape, siteMarginsOf } from "./layout.js?v=276";
-import { buildChain } from "./rampModules.js?v=276";
+import { closedRing, polygonFromPlate } from "./polygon.js?v=277";
+import { rampFootprint, rampShape, siteMarginsOf } from "./layout.js?v=277";
+import { buildChain } from "./rampModules.js?v=277";
 
 const LAYERS = [
   ["PD-PLATE", 7, "CONTINUOUS"],

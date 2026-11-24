@@ -1,7 +1,7 @@
 // DXF 내보내기 검사: node scripts/dxf-export.mjs
-import { referenceCase, layoutParking, defaultCore, minStraightRampLength, rampTransitions } from "../src/layout.js?v=276";
-import { buildDxf, LAYERS, dxfText } from "../src/dxfExport.js?v=276";
-import { polygonFromPlate } from "../src/polygon.js?v=276";
+import { referenceCase, layoutParking, defaultCore, minStraightRampLength, rampTransitions } from "../src/layout.js?v=277";
+import { buildDxf, LAYERS, dxfText } from "../src/dxfExport.js?v=277";
+import { polygonFromPlate } from "../src/polygon.js?v=277";
 
 let fails = 0;
 const expect = (cond, msg) => {

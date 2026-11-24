@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=276";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=277";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,14 +6,14 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=276";
-import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=276";
+} from "./rampForms.js?v=277";
+import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=277";
 import {
   analyzeOnPlate,
   slopePlan,
   usesModuleLayout,
   buildChain,
-} from "./rampModules.js?v=276";
+} from "./rampModules.js?v=277";
 import {
   polygonFromPlate,
   rectPolygon,
@@ -21,7 +21,7 @@ import {
   outsideBlockRects,
   isRectangularPlate,
   insetPolygon,
-} from "./polygon.js?v=276";
+} from "./polygon.js?v=277";
 
 export {
   lowerFloorRamp,
@@ -29,8 +29,8 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=276";
-export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=276";
+} from "./rampForms.js?v=277";
+export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=277";
 
 /** 모듈 사슬 램프의 평면 분석(legacy 동등이면 null). */
 function moduleSiteOf(ramp, plate, blocks = []) {
@@ -1458,10 +1458,11 @@ export function generateVariants(input) {
   const valid = variants.filter((v) => v.metrics.valid);
   const top = Math.max(-1, ...valid.map((v) => v.metrics.stalls));
   valid.forEach((v) => { v.maxStalls = v.metrics.stalls === top; });
-  // 장애인 코어 인접 안: 추천안과 같은 설정으로, 코어 옆에 차로를 뚫어 장애인 칸을 코어에 붙인다(대수가 줄 수 있음).
-  if (!input.noUniform) {
+  // 빠른 모드(quick)·noUniform에서는 부가 안(코어 인접·방향 통일·램프 인접)을 생략한다.
+  if (!input.noUniform && !input.quick) {
     const baseIndex = best ? best.index : 0;
     const baseSpec = variants[baseIndex].spec;
+    // 장애인 코어 인접 안: 추천안과 같은 설정으로, 코어 옆에 차로를 뚫어 장애인 칸을 코어에 붙인다(대수가 줄 수 있음).
     const side = layoutParking({ ...input, spec: { ...baseSpec, coreAisle: true } });
     const ok = side.metrics && side.metrics.coreAisle;
     variants.push({
@@ -1473,11 +1474,7 @@ export function generateVariants(input) {
       maxStalls: side.metrics.valid && side.metrics.stalls === top,
       coreSide: true,
     });
-  }
-  // 방향 통일 안: 추천안과 같은 설정으로, 정해진 줄과 방향이 다른 빈자리 칸을 같은 방향으로 바꾼 안
-  if (!input.noUniform) {
-    const baseIndex = best ? best.index : 0;
-    const baseSpec = variants[baseIndex].spec;
+    // 방향 통일 안: 추천안과 같은 설정으로, 정해진 줄과 방향이 다른 빈자리 칸을 같은 방향으로 바꾼 안
     const uniform = layoutParking({ ...input, spec: { ...baseSpec, uniform: true } });
     variants.push({
       ...uniform,
@@ -1488,22 +1485,21 @@ export function generateVariants(input) {
       maxStalls: uniform.metrics.valid && uniform.metrics.stalls === top,
       uniform: true,
     });
-  }
-  // 코어 램프 인접 안: 추천안과 같은 설정으로, 코어를 램프 옆면에 붙인 자리 중 대수가 가장 많은 곳(대수가 줄 수 있음).
-  if (!input.noUniform && (input.cores || []).length === 1 && (input.ramps || []).length) {
-    const baseIndex = best ? best.index : 0;
-    const base = variants[baseIndex];
-    const near = coreBesideRamp(input, base);
-    if (near) {
-      variants.push({
-        ...near,
-        id: `V${variants.length + 1}`,
-        name: `코어 램프 인접 (${base.id} 기준) · 램프 옆면에 코어`,
-        spec: base.spec,
-        recommended: false,
-        maxStalls: near.metrics.valid && near.metrics.stalls === top,
-        coreRamp: true,
-      });
+    // 코어 램프 인접 안: 추천안과 같은 설정으로, 코어를 램프 옆면에 붙인 자리 중 대수가 가장 많은 곳(대수가 줄 수 있음).
+    if ((input.cores || []).length === 1 && (input.ramps || []).length) {
+      const base = variants[baseIndex];
+      const near = coreBesideRamp(input, base);
+      if (near) {
+        variants.push({
+          ...near,
+          id: `V${variants.length + 1}`,
+          name: `코어 램프 인접 (${base.id} 기준) · 램프 옆면에 코어`,
+          spec: base.spec,
+          recommended: false,
+          maxStalls: near.metrics.valid && near.metrics.stalls === top,
+          coreRamp: true,
+        });
+      }
     }
   }
   return variants;

@@ -1,16 +1,25 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=276";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=276";
-import { drawThumb, mountPlan } from "./plan.js?v=276";
-import { stallRuleTargets } from "./stallTypes.js?v=276";
-import { downloadBlob, drawSheet, printSheet, sheetSvg } from "./sheet.js?v=276";
-import { buildDxf, downloadDxf, dxfFilename } from "./dxfExport.js?v=276";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=277";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=277";
+import { drawThumb, mountPlan } from "./plan.js?v=277";
+import { stallRuleTargets } from "./stallTypes.js?v=277";
 import {
   plateDimsFromPolygon, presetChamferRect, presetL, presetTrapezoid, presetU,
   rectPolygon, validatePolygon, normalizePolygon, offsetPolygon, polygonArea, edgeLengths,
-} from "./polygon.js?v=276";
-import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=276";
-import { bindContextDialog, closeContext, openContext, openSitePicker, updatePickerMarker } from "./context.js?v=276";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, rampModuleInfo, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=276";
+} from "./polygon.js?v=277";
+import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=277";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, rampModuleInfo, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=277";
+
+// 시트·DXF·주변지도는 클릭 시에만 불러 초기 로딩을 줄인다.
+let sheetMod = null;
+let dxfMod = null;
+let contextMod = null;
+const loadSheet = () => (sheetMod ||= import("./sheet.js?v=277"));
+const loadDxf = () => (dxfMod ||= import("./dxfExport.js?v=277"));
+const loadContext = () => (contextMod ||= import("./context.js?v=277"));
+async function closeContext() {
+  const m = await loadContext();
+  return m.closeContext();
+}
 
 const $ = (id) => document.getElementById(id);
 const edgeName = { s: "남", n: "북", w: "서", e: "동" };
@@ -222,7 +231,8 @@ $("ramp-form").addEventListener("change", () => {
   });
   syncPlateMeta();
   if (state.plate) {
-    if (state.variants?.length) optimizeLayout();
+    // 후보 목록 전체 재생성은 생략(현재 배치만 갱신)
+    if (state.variants?.length) optimizeLayout({ refresh: false });
     else generatePlate();
   }
   emit();
@@ -231,8 +241,8 @@ $("lower-ramp-form").addEventListener("change", () => {
   state.lowerRampForm = $("lower-ramp-form").value;
   syncPlateMeta();
   if (state.plate) {
-    // 층간 형태만 바꿔도 점유·3D 경로가 바뀌므로 재배치
-    if (state.variants?.length) optimizeLayout();
+    // 층간 형태만 바꿔도 점유·3D 경로가 바뀌므로 재배치(후보 목록은 유지)
+    if (state.variants?.length) optimizeLayout({ refresh: false });
     else generatePlate();
   }
   emit();
@@ -241,7 +251,7 @@ $("lower-ramp-mode").addEventListener("change", () => {
   state.lowerRampMode = $("lower-ramp-mode").value;
   syncPlateMeta();
   if (state.plate) {
-    if (state.variants?.length) optimizeLayout();
+    if (state.variants?.length) optimizeLayout({ refresh: false });
     else generatePlate();
   }
   emit();
@@ -331,8 +341,8 @@ function setWizard(next, { silent = false } = {}) {
     }
     // 예전에 model인데 scene이 없으면 plan으로 되돌리던 로직은 제거 —
     // 탭에서 open3d()가 마운트를 시도하도록 둔다.
-    // 결과 단계 진입: 램프·코어 배치를 고정한 채 최적 주차 배치를 다시 찾는다
-    if (next === 7 && state.plate) {
+    // 결과 단계: 램프/코어 이동 때 이미 rebuildLayout이 돌았으면 중복 최적화를 건너뛴다.
+    if (next === 7 && state.plate && !state.variants?.length) {
       busy("최적 주차 배치를 다시 찾는 중…", () => {
         syncPlateMeta();
         optimizeLayout();
@@ -686,10 +696,11 @@ $("tab-model").addEventListener("click", async () => {
 });
 $("tab-sheet").addEventListener("click", () => {
   state.resultTab = "sheet";
-  const show = () => {
+  const show = async () => {
     state.resultTab = "sheet";
     state.step = 3;
     emit();
+    const { drawSheet } = await loadSheet();
     requestAnimationFrame(() => {
       const info = summary();
       const canvas = $("sheet");
@@ -700,7 +711,7 @@ $("tab-sheet").addEventListener("click", () => {
   };
   if (wizardSlide !== 7) {
     setWizard(7);
-    window.setTimeout(show, 420);
+    window.setTimeout(() => { show(); }, 420);
   } else {
     show();
   }
@@ -712,18 +723,24 @@ if ($("tab-plan")) {
     emit();
   });
 }
-$("sheet-png").addEventListener("click", () => {
+$("sheet-png").addEventListener("click", async () => {
+  const { downloadBlob } = await loadSheet();
   const canvas = $("sheet");
   canvas.toBlob((blob) => downloadBlob("parking-plan.png", blob));
 });
-$("sheet-svg").addEventListener("click", () => {
+$("sheet-svg").addEventListener("click", async () => {
+  const { downloadBlob, sheetSvg } = await loadSheet();
   const info = summary();
   const svg = sheetSvg(state, { ...info, checkedOn: info.demand.checkedOn }, sheetFloor());
   downloadBlob("parking-plan.svg", new Blob([svg], { type: "image/svg+xml" }));
 });
-$("sheet-print").addEventListener("click", () => printSheet($("sheet")));
-$("sheet-dxf")?.addEventListener("click", () => {
+$("sheet-print").addEventListener("click", async () => {
+  const { printSheet } = await loadSheet();
+  printSheet($("sheet"));
+});
+$("sheet-dxf")?.addEventListener("click", async () => {
   if (!state.plate) return;
+  const { buildDxf, downloadDxf, dxfFilename } = await loadDxf();
   const info = summary();
   const unit = $("dxf-unit")?.value === "m" ? "m" : "mm";
   const allFloors = Boolean($("dxf-all-floors")?.checked);
@@ -731,7 +748,7 @@ $("sheet-dxf")?.addEventListener("click", () => {
     unit,
     floorIndex: sheetFloor(),
     allFloors,
-    version: "r275",
+    version: "r277",
   });
   downloadDxf(dxfFilename(state, sheetFloor(), allFloors), dxf);
 });
@@ -785,7 +802,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=276")
+    sceneMount = import("./scene.js?v=277")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -1114,7 +1131,11 @@ function render() {
   $("scene-stats").innerHTML = statList(rows, 3);
   $("floor-stack").innerHTML = floorStack(info.floors);
   $("floor-picker").innerHTML = floorPicker(info.floors);
-  if (showSheet) drawSheet($("sheet"), state, { ...info, checkedOn: info.demand.checkedOn }, sheetFloor());
+  if (showSheet) {
+    loadSheet().then(({ drawSheet }) => {
+      drawSheet($("sheet"), state, { ...info, checkedOn: info.demand.checkedOn }, sheetFloor());
+    });
+  }
 
   if (state.core && document.activeElement !== fields.coreArea) fields.coreArea.value = String(Math.round(state.core.w * state.core.d));
   if (state.core) {
@@ -1458,8 +1479,14 @@ function buildDemandForm() {
       $("zone").disabled = false;
       box.innerHTML = `<p>${r.address}</p><p>좌표는 찾았습니다. 용도지역 레이어를 아직 받지 못했습니다. 지도에서 줌인(15+)해 색을 확인하거나 «상세 입력»·토지이음에서 고르세요.</p>${eumLine}`
         + (r.point ? `<p class="cx-open"><button type="button" class="ghost tiny" data-cx="map">지도 열기</button></p>` : "");
-      box.querySelectorAll("[data-cx]").forEach((b) => b.addEventListener("click", () => openContext(r.point, site, "map", r.address, access)));
-      if (openMap && r.point) openContext(r.point, site, "map", r.address, access);
+      box.querySelectorAll("[data-cx]").forEach((b) => b.addEventListener("click", async () => {
+        const { openContext } = await loadContext();
+        openContext(r.point, site, "map", r.address, access);
+      }));
+      if (openMap && r.point) {
+        const { openContext } = await loadContext();
+        openContext(r.point, site, "map", r.address, access);
+      }
       read();
       return;
     }
@@ -1484,8 +1511,14 @@ function buildDemandForm() {
     box.innerHTML = `<p>${r.address} <span class="hint">(${src})</span></p><ul>${lines}</ul>${multi}${areaLine}${accessLine}`
       + `<p class="note">건폐율·용적률은 국토계획법 시행령 상한입니다. 실제 값은 시·군 조례로 더 낮을 수 있습니다.</p>${eumLine}`
       + `<p class="cx-open">주변 보기 <button type="button" class="ghost tiny" data-cx="map">지도</button> <button type="button" class="ghost tiny" data-cx="2d">2D</button> <button type="button" class="ghost tiny" data-cx="3d">3D</button></p>`;
-    box.querySelectorAll("[data-cx]").forEach((b) => b.addEventListener("click", () => openContext(r.point, site, b.dataset.cx, r.address, access)));
-    if (openMap && r.point) openContext(r.point, site, "map", r.address, access);
+    box.querySelectorAll("[data-cx]").forEach((b) => b.addEventListener("click", async () => {
+      const { openContext } = await loadContext();
+      openContext(r.point, site, b.dataset.cx, r.address, access);
+    }));
+    if (openMap && r.point) {
+      const { openContext } = await loadContext();
+      openContext(r.point, site, "map", r.address, access);
+    }
 
     const hit = Object.entries(zoneFactors).find(([, z]) => r.zones.some((name) => squash(name) === squash(z.label)));
     if (hit) $("zone").value = hit[0];
@@ -1537,12 +1570,13 @@ function buildDemandForm() {
     }
   };
   $("zone-lookup").addEventListener("click", lookup);
-  $("map-pick").addEventListener("click", () => {
+  $("map-pick").addEventListener("click", async () => {
     const box = $("zone-result");
     box.hidden = false;
     box.className = "zone-result";
     box.textContent = "지도에서 대지를 클릭하세요. 휠로 확대하면 용도지역 색이 보입니다.";
     const known = state.demand?.sitePoint || null;
+    const { openSitePicker, updatePickerMarker } = await loadContext();
     openSitePicker(known, async (pt) => {
       box.textContent = "선택한 위치 조회 중…";
       updatePickerMarker(pt, "선택 중…");
@@ -1557,7 +1591,7 @@ function buildDemandForm() {
       }
     });
   });
-  bindContextDialog();
+  loadContext().then(({ bindContextDialog }) => bindContextDialog());
   // 용도지역·지역 선택칸은 '상세 입력'을 열어야 보인다. 평소에는 현재 값만 한 줄로 보여 준다.
   $("open-zone-detail").addEventListener("click", () => {
     const box = $("zone-detail");

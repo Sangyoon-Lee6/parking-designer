@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=276" />
+    <link rel="stylesheet" href="styles.css?v=277" />
     <script type="importmap">
       {
         "imports": {
@@ -15,8 +15,7 @@
         }
       }
     </script>
-      <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
-    <script src="vendor/leaflet/leaflet.js"></script>
+    <!-- Leaflet·Three는 지도/3D가 필요할 때만 동적 로드 (초기 로딩 단축) -->
   </head>
   <body class="app" data-wizard="1">
     <header class="topbar">
@@ -716,7 +715,7 @@
     <button id="plan-expand-hit" type="button" hidden>expand</button>
     <button id="collapse-plan" type="button" hidden>접기</button>
 
-    <script type="module" src="src/main.js?v=276"></script>
+    <script type="module" src="src/main.js?v=277"></script>
     <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>
