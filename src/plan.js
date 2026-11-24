@@ -1,4 +1,4 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=282";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=283";
 import {
   analyzeOnPlate, buildChain, slopePlan, usesModuleLayout,
 } from "./rampModules.js?v=282";
@@ -8,7 +8,7 @@ import {
 import {
   emit, moveOpening, moveRamp, moveRampFree, placeOpening, placeRamp,
   selectCore, selectItem, setParkPolygon, state, subscribe, updateCore,
-} from "./state.js?v=282";
+} from "./state.js?v=283";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -256,7 +256,12 @@ export function mountPlan(canvas) {
 
   canvas.addEventListener("pointerdown", (event) => {
     if (!state.plate) return;
+    if (!Number.isFinite(camera.scale) || camera.scale <= 0) {
+      fittedKey = "";
+      fit(canvas.getBoundingClientRect());
+    }
     const world = screenToWorld(canvas, event.clientX, event.clientY);
+    if (!world) return;
     if (event.button === 1 || event.button === 2 || state.tool === "pan") {
       drag = { mode: "pan", x: event.clientX, y: event.clientY, cx: camera.x, cy: camera.y };
       canvas.setPointerCapture(event.pointerId);
@@ -363,20 +368,36 @@ export function mountPlan(canvas) {
     }
 
     const edge = pickEdge(world, state.plate);
-    if (!edge) return;
-    if (state.tool === "entrance") placeOpening("in", edge.edge, edge.t);
-    if (state.tool === "exit") placeOpening("out", edge.edge, edge.t);
-    if (state.tool === "ramp") placeRamp(edge.edge, edge.t);
+    if (edge && state.tool === "entrance") {
+      placeOpening("in", edge.edge, edge.t);
+      return;
+    }
+    if (edge && state.tool === "exit") {
+      placeOpening("out", edge.edge, edge.t);
+      return;
+    }
+    if (edge && state.tool === "ramp") {
+      placeRamp(edge.edge, edge.t);
+      return;
+    }
+    // 빈 곳 왼쪽 드래그 → 화면 이동 (안내문과 동일)
+    drag = { mode: "pan", x: event.clientX, y: event.clientY, cx: camera.x, cy: camera.y };
+    canvas.setPointerCapture(event.pointerId);
   });
 
   canvas.addEventListener("pointermove", (event) => {
     const world = state.plate ? screenToWorld(canvas, event.clientX, event.clientY) : null;
     const readout = document.getElementById("readout");
-    if (world) readout.textContent = `X ${world.x.toFixed(1)}  Y ${world.y.toFixed(1)} m`;
+    if (world && Number.isFinite(world.x) && Number.isFinite(world.y)) {
+      readout.textContent = `X ${world.x.toFixed(1)}  Y ${world.y.toFixed(1)} m`;
+    } else if (readout) {
+      readout.textContent = "";
+    }
     if (!drag || !world) return;
     if (drag.mode === "pan") {
-      camera.x = drag.cx - (event.clientX - drag.x) / camera.scale;
-      camera.y = drag.cy + (event.clientY - drag.y) / camera.scale;
+      const s = Number.isFinite(camera.scale) && camera.scale > 0 ? camera.scale : 12;
+      camera.x = drag.cx - (event.clientX - drag.x) / s;
+      camera.y = drag.cy + (event.clientY - drag.y) / s;
       draw();
       return;
     }
@@ -447,13 +468,61 @@ export function mountPlan(canvas) {
   canvas.addEventListener("wheel", (event) => {
     if (!state.plate) return;
     event.preventDefault();
+    if (!Number.isFinite(camera.scale) || camera.scale <= 0) {
+      fittedKey = "";
+      fit(canvas.getBoundingClientRect());
+    }
     const before = screenToWorld(canvas, event.clientX, event.clientY);
-    camera.scale = Math.max(4, Math.min(90, camera.scale * (event.deltaY > 0 ? 0.92 : 1.08)));
+    if (!before) return;
+    const next = Math.max(4, Math.min(90, camera.scale * (event.deltaY > 0 ? 0.92 : 1.08)));
+    if (!Number.isFinite(next)) return;
+    camera.scale = next;
     const after = screenToWorld(canvas, event.clientX, event.clientY);
+    if (!after) return;
     camera.x += before.x - after.x;
     camera.y += before.y - after.y;
     draw();
   }, { passive: false });
+
+  // 터치 핀치 확대·축소
+  let pinch = null;
+  canvas.addEventListener("touchstart", (event) => {
+    if (!state.plate || event.touches.length !== 2) return;
+    event.preventDefault();
+    const a = event.touches[0];
+    const b = event.touches[1];
+    pinch = {
+      dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+      scale: camera.scale,
+      midX: (a.clientX + b.clientX) / 2,
+      midY: (a.clientY + b.clientY) / 2,
+      cx: camera.x,
+      cy: camera.y,
+    };
+    drag = null;
+  }, { passive: false });
+  canvas.addEventListener("touchmove", (event) => {
+    if (!pinch || event.touches.length !== 2) return;
+    event.preventDefault();
+    const a = event.touches[0];
+    const b = event.touches[1];
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    if (!(pinch.dist > 0) || !Number.isFinite(dist)) return;
+    const before = screenToWorld(canvas, pinch.midX, pinch.midY);
+    const next = Math.max(4, Math.min(90, pinch.scale * (dist / pinch.dist)));
+    if (!Number.isFinite(next)) return;
+    camera.scale = next;
+    const midX = (a.clientX + b.clientX) / 2;
+    const midY = (a.clientY + b.clientY) / 2;
+    const after = screenToWorld(canvas, midX, midY);
+    if (before && after) {
+      camera.x += before.x - after.x;
+      camera.y += before.y - after.y;
+    }
+    draw();
+  }, { passive: false });
+  canvas.addEventListener("touchend", () => { pinch = null; });
+  canvas.addEventListener("touchcancel", () => { pinch = null; });
 
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
@@ -475,26 +544,34 @@ function viewBounds() {
     siteMargin: plate.siteMargin != null ? plate.siteMargin : state.siteMargin,
     siteMargins: plate.siteMargins || state.siteMargins,
   });
-  let minX = -Math.max(1, m.w);
-  let minY = -Math.max(1, m.s);
-  let maxX = plate.width + Math.max(1, m.e);
-  let maxY = plate.depth + Math.max(1, m.n);
-  state.ramps.forEach((ramp) => {
+  let minX = -Math.max(1, Number(m.w) || 1);
+  let minY = -Math.max(1, Number(m.s) || 1);
+  let maxX = Number(plate.width) + Math.max(1, Number(m.e) || 1);
+  let maxY = Number(plate.depth) + Math.max(1, Number(m.n) || 1);
+  (state.ramps || []).forEach((ramp) => {
     const box = rampFootprint(ramp, plate);
-    minX = Math.min(minX, box.x);
-    minY = Math.min(minY, box.y);
-    maxX = Math.max(maxX, box.x + box.w);
-    maxY = Math.max(maxY, box.y + box.d);
+    if (!box) return;
+    const x = Number(box.x);
+    const y = Number(box.y);
+    const w = Number(box.w);
+    const d = Number(box.d);
+    if (![x, y, w, d].every(Number.isFinite) || w <= 0 || d <= 0) return;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + w);
+    maxY = Math.max(maxY, y + d);
   });
+  const width = Math.max(8, maxX - minX);
+  const height = Math.max(8, maxY - minY);
   if (state.overlay.mode === "side") {
     return {
-      width: (maxX - minX) * 2,
-      height: maxY - minY,
+      width: width * 2,
+      height,
       x: (minX + maxX) / 2,
       y: (minY + maxY) / 2,
     };
   }
-  return { width: maxX - minX, height: maxY - minY, x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+  return { width, height, x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
 }
 
 function drawPreviewShell(ctx, rect) {
@@ -547,19 +624,24 @@ function drawPreviewShell(ctx, rect) {
 function fit(rect) {
   const bounds = viewBounds();
   const width = state.overlay.mode === "side" ? rect.width / 2 : rect.width;
-  camera.scale = Math.min(width / (bounds.width + 8), rect.height / (bounds.height + 8));
-  camera.x = bounds.x;
-  camera.y = bounds.y;
+  const bw = Math.max(8, Number(bounds.width) || 8);
+  const bh = Math.max(8, Number(bounds.height) || 8);
+  let scale = Math.min(width / (bw + 8), rect.height / (bh + 8));
+  if (!Number.isFinite(scale) || scale <= 0) scale = 12;
+  camera.scale = Math.max(0.5, Math.min(90, scale));
+  camera.x = Number.isFinite(bounds.x) ? bounds.x : 0;
+  camera.y = Number.isFinite(bounds.y) ? bounds.y : 0;
 }
 
 function screenToWorld(canvas, clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
+  const s = Number.isFinite(camera.scale) && camera.scale > 0 ? camera.scale : 12;
   const x = clientX - rect.left;
   const y = clientY - rect.top;
-  return {
-    x: (x - rect.width / 2) / camera.scale + camera.x,
-    y: (rect.height / 2 - y) / camera.scale + camera.y,
-  };
+  const wx = (x - rect.width / 2) / s + camera.x;
+  const wy = (rect.height / 2 - y) / s + camera.y;
+  if (!Number.isFinite(wx) || !Number.isFinite(wy)) return null;
+  return { x: wx, y: wy };
 }
 
 function hit(point, rect) {

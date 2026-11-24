@@ -713,18 +713,35 @@ function insetOf(ramp) {
 export function rampFootprint(ramp, plate) {
   return withGap(ramp, plate, rampFootprintRaw);
 }
+
+/** 모듈 사슬 AABB — length/t가 비어도 좌표가 NaN이 되지 않게. */
+function moduleFootprintAabb(ramp) {
+  if (!ramp?.modules?.length) return null;
+  try {
+    const chain = buildChain(ramp);
+    const rects = (chain.modules || []).flatMap((m) => m.rects || []).filter((r) => (
+      Number.isFinite(r?.x) && Number.isFinite(r?.y) && Number.isFinite(r?.w) && Number.isFinite(r?.d)
+    ));
+    if (!rects.length) return null;
+    const x0 = Math.min(...rects.map((r) => r.x));
+    const y0 = Math.min(...rects.map((r) => r.y));
+    const x1 = Math.max(...rects.map((r) => r.x + r.w));
+    const y1 = Math.max(...rects.map((r) => r.y + r.d));
+    return { x: round3(x0), y: round3(y0), w: round3(x1 - x0), d: round3(y1 - y0) };
+  } catch (e) {
+    return null;
+  }
+}
+
 function rampFootprintRaw(ramp, plate) {
+  // 모듈 사슬이 있으면 AABB를 우선 (length 누락 시 NaN 방지)
+  const modBox = moduleFootprintAabb(ramp);
+  if (modBox && modBox.w > 0.05 && modBox.d > 0.05) return modBox;
+
   if (rampFormOf(ramp, plate && plate.rampForm) === "spiral") {
     const shape = spiralRampShape(ramp, plate);
     if (shape.ok) return shape.footprint || shape.pieces[0];
     // 실패 시 직선 footprint로 (깨진 외곽 AABB가 주차 영역을 삼키지 않게)
-    const { edge, t, width, length } = ramp;
-    const external = (ramp.placement || "internal") === "external";
-    const k = insetOf(ramp);
-    if (edge === "s") return { x: t - width / 2, y: external ? -length : k, w: width, d: length };
-    if (edge === "n") return { x: t - width / 2, y: external ? plate.depth : plate.depth - k - length, w: width, d: length };
-    if (edge === "w") return { x: external ? -length : k, y: t - width / 2, w: length, d: width };
-    return { x: external ? plate.width : plate.width - k - length, y: t - width / 2, w: length, d: width };
   }
   if ((ramp.placement || "internal") === "external" && rampFormOf(ramp, plate && plate.rampForm) === "curve90") {
     const shape = externalCurve90Shape(ramp, plate, {
@@ -741,7 +758,12 @@ function rampFootprintRaw(ramp, plate) {
       return { x: x0, y: y0, w: x1 - x0, d: y1 - y0 };
     }
   }
-  const { edge, t, width, length } = ramp;
+  const edge = ramp.edge || "w";
+  const width = Number(ramp.width) || AISLE;
+  const length = Number(ramp.length)
+    || (Array.isArray(ramp.modules) ? ramp.modules.reduce((s, m) => s + (Number(m.length) || 0), 0) : 0)
+    || defaultRampLength(plate, edge);
+  const t = Number.isFinite(Number(ramp.t)) ? Number(ramp.t) : (edge === "n" || edge === "s" ? plate.width : plate.depth) / 2;
   const external = (ramp.placement || "internal") === "external";
   const k = insetOf(ramp);
   if (edge === "s") return { x: t - width / 2, y: external ? -length : k, w: width, d: length };
@@ -4212,6 +4234,11 @@ function innerPlateOf(plate, c) {
 function withGap(ramp, plate, raw) {
   const c = edgeGap(plate);
   if (!c || !ramp) return raw(ramp, plate);
+  // 모듈 사슬은 이미 절대좌표 AABB — gap 보정을 다시 하면 어긋나거나 NaN이 난다
+  if (usesModuleLayout(ramp, plate)) {
+    const box = moduleFootprintAabb(ramp);
+    if (box && box.w > 0.05 && box.d > 0.05) return box;
+  }
   const inner = innerPlateOf(plate, c);
   const external = (ramp.placement || "internal") === "external";
   const res = raw({ ...ramp, t: ramp.t - c }, inner);

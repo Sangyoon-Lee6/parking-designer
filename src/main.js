@@ -1,13 +1,13 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=282";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=283";
 import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=282";
-import { drawThumb, mountPlan } from "./plan.js?v=282";
+import { drawThumb, mountPlan } from "./plan.js?v=283";
 import { stallRuleTargets } from "./stallTypes.js?v=282";
 import {
   plateDimsFromPolygon, presetChamferRect, presetL, presetTrapezoid, presetU,
   rectPolygon, validatePolygon, normalizePolygon, offsetPolygon, polygonArea, edgeLengths,
 } from "./polygon.js?v=282";
 import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=282";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=282";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=283";
 
 // 시트·DXF·주변지도는 클릭 시에만 불러 초기 로딩을 줄인다.
 let sheetMod = null;
@@ -140,11 +140,24 @@ bindMarginInput("site-margin-step4", null);
 });
 $("open-margin-dialog")?.addEventListener("click", () => $("margin-dialog").showModal());
 $("close-margin-dialog")?.addEventListener("click", () => { $("margin-dialog").close(); render(); });
+/** 5·6단계는 셸만, 주차 칸이 있으면 재배치. */
+function refreshPlateAfterOption() {
+  if (!state.plate) {
+    render();
+    return;
+  }
+  if (state.variants?.length || (state.stalls && state.stalls.length)) {
+    optimizeLayout({ refresh: false });
+    emit();
+    return;
+  }
+  preparePlateShell({ replaceCores: false });
+}
 $("road-edge").addEventListener("change", () => {
   state.roadEdge = $("road-edge").value;
   if (state.plate) {
     state.plate = { ...state.plate, roadEdge: state.roadEdge };
-    generatePlate({ recommend: false });
+    refreshPlateAfterOption();
   } else {
     render();
   }
@@ -153,7 +166,7 @@ $("ramp-pos").addEventListener("change", () => {
   state.rampPos = $("ramp-pos").value;
   if (state.plate) {
     state.plate = { ...state.plate, rampPos: state.rampPos };
-    generatePlate({ recommend: false });
+    refreshPlateAfterOption();
   } else {
     render();
   }
@@ -231,37 +244,26 @@ $("ramp-form").addEventListener("change", () => {
     return next;
   });
   syncPlateMeta();
-  if (state.plate) {
-    // 후보 목록 전체 재생성은 생략(현재 배치만 갱신)
-    if (state.variants?.length) optimizeLayout({ refresh: false });
-    else generatePlate({ recommend: false });
-  }
-  emit();
+  if (state.plate) refreshPlateAfterOption();
+  else emit();
 });
 $("lower-ramp-form").addEventListener("change", () => {
   state.lowerRampForm = $("lower-ramp-form").value;
   syncPlateMeta();
-  if (state.plate) {
-    // 층간 형태만 바꿔도 점유·3D 경로가 바뀌므로 재배치(후보 목록은 유지)
-    if (state.variants?.length) optimizeLayout({ refresh: false });
-    else generatePlate({ recommend: false });
-  }
-  emit();
+  if (state.plate) refreshPlateAfterOption();
+  else emit();
 });
 $("lower-ramp-mode").addEventListener("change", () => {
   state.lowerRampMode = $("lower-ramp-mode").value;
   syncPlateMeta();
-  if (state.plate) {
-    if (state.variants?.length) optimizeLayout({ refresh: false });
-    else generatePlate({ recommend: false });
-  }
-  emit();
+  if (state.plate) refreshPlateAfterOption();
+  else emit();
 });
 $("ramp-placement").addEventListener("change", () => {
   state.rampPlacement = $("ramp-placement").value;
   if (state.plate) {
     state.plate = { ...state.plate, rampPlacement: state.rampPlacement };
-    generatePlate({ recommend: false });
+    refreshPlateAfterOption();
   } else {
     render();
   }
@@ -304,7 +306,7 @@ $("load-reference").addEventListener("click", () => {
 $("generate").addEventListener("click", () => {
   if (!inputsValid()) return;
   busy("평면 준비 중…", () => {
-    generatePlate({ recommend: false });
+    preparePlateShell();
     setWizard(5, { silent: true });
   });
 });
@@ -366,7 +368,7 @@ function setWizard(next, { silent = false } = {}) {
     }, 360);
   };
 
-  // 7단계: 램프·코어 설정이 끝난 뒤 추천 3안 탐색
+  // 7단계: 램프·코어 설정이 끝난 뒤 주차장을 생성하고 추천 3안 탐색
   if (next === 7) {
     if (!inputsValid()) {
       setWizard(3, { silent: true });
@@ -379,14 +381,14 @@ function setWizard(next, { silent = false } = {}) {
     return;
   }
 
-  // 5·6단계: 추천 탐색 없이 편집용 초안만 (4단계에서 미리 찾지 않음)
+  // 5·6단계: 주차 칸 없이 평면·램프·코어 셸만 (생성은 6→7)
   if (next >= 5 && next <= 6 && !state.plate) {
     if (!inputsValid()) {
       setWizard(3, { silent: true });
       return;
     }
     busy("평면 준비 중…", () => {
-      generatePlate({ recommend: false });
+      preparePlateShell();
       enter();
     });
     return;
@@ -1241,19 +1243,21 @@ function render() {
   renderCorePick();
 
   // 불가능한 배치 → 빨간 상자에 원인(3D 막힘), 가능하지만 알릴 것 → 노란 상자(3D 가능)
+  // 5·6은 주차 생성 전 셸이라 이슈를 숨긴다(6→7에서 생성 후 표시).
   const { errors, warnings } = issueGroups();
   const listHtml = (items) => `<ul>${items.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>`;
-  const showIssues = wizardSlide >= 5 && wizardSlide <= 8 && state.plate;
+  const hasParking = Boolean(state.stalls && state.stalls.length);
+  const showIssues = wizardSlide >= 7 && wizardSlide <= 8 && state.plate && hasParking;
   $("step2-error").hidden = !showIssues || errors.length === 0;
   $("step2-error").innerHTML = errors.length ? `<strong>3D를 만들 수 없습니다 — 원인</strong>${listHtml(errors)}` : "";
   $("step2-warn").hidden = !showIssues || warnings.length === 0;
   $("step2-warn").innerHTML = warnings.length ? `<strong>주의 (3D는 만들 수 있음)</strong>${listHtml(warnings)}` : "";
-  // 같은 내용을 평면 위(오른쪽 아래)에도 띄워, 끌어 옮기는 중에 바로 보이게 한다.
+  // 평면 위 알림은 생성 전(5·6)에는 비움
   const alert = $("plan-alert");
   const boxes = [];
-  if (errors.length) boxes.push(`<div class="issue-box error"><strong>3D 불가 — 원인</strong>${listHtml(errors)}</div>`);
-  if (warnings.length) boxes.push(`<div class="issue-box warn"><strong>주의</strong>${listHtml(warnings)}</div>`);
-  alert.hidden = wizardSlide < 5 || wizardSlide > 6 || !state.plate || boxes.length === 0;
+  if (showIssues && errors.length) boxes.push(`<div class="issue-box error"><strong>3D 불가 — 원인</strong>${listHtml(errors)}</div>`);
+  if (showIssues && warnings.length) boxes.push(`<div class="issue-box warn"><strong>주의</strong>${listHtml(warnings)}</div>`);
+  alert.hidden = boxes.length === 0;
   alert.innerHTML = boxes.join("");
   const ready = readyFor3d();
   if ($("to-3d")) {

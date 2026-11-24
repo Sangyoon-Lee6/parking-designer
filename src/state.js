@@ -19,7 +19,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=282";
+} from "./layout.js?v=283";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -469,6 +469,10 @@ export function optimizeLayout({ refresh = true } = {}) {
 }
 
 export function rebuildLayout() {
+  // 5·6 셸(주차 미생성)에서는 위치만 바꾸고, 배치는 6→7 recommendLayouts에서
+  if (!(state.stalls && state.stalls.length) && !(state.variants && state.variants.length)) {
+    return;
+  }
   // 호환: 단일 배치 대신 최적 재탐색
   optimizeLayout();
 }
@@ -512,14 +516,36 @@ function seedAccess() {
   if (state.plate) state.ramps = state.ramps.map((r) => ensureModules(r, state.plate));
 }
 
+function clearParkingGeometry() {
+  state.stalls = [];
+  state.aisles = [];
+  state.columns = [];
+  state.drives = [];
+  state.route = null;
+  state.issues = [];
+  state.columnConflicts = [];
+  state.clearance = null;
+  state.metrics = null;
+  state.connected = false;
+  state.variants = [];
+  state.variantIndex = 0;
+  state.gridX = null;
+  state.gridY = null;
+  state.axis = null;
+  state.fixedAlong = null;
+  state.flexAlong = null;
+  state.spec = null;
+}
+
 /**
- * 주차장 평면을 만든다.
- * @param {{ recommend?: boolean }} [opts] recommend=false면 후보 목록 없이 초안만(램프·코어 편집용).
+ * 평면·코어·램프만 준비한다(주차 칸·후보는 만들지 않음).
+ * 5·6단계에서 사용자가 램프·코어를 지정할 때 쓴다.
+ * @param {{ replaceCores?: boolean }} [opts] replaceCores=false면 기존 코어 위치를 유지한다.
  */
-export function generatePlate(opts = {}) {
+export function preparePlateShell(opts = {}) {
+  const replaceCores = opts.replaceCores !== false;
   const notes = [];
   state.plate = plateFromState();
-  let resizedComplex = false;
   if (state.siteType === "complex") {
     // 동 외곽(blockUnder)까지 넣으면 80×58로는 타워가 겹쳐 배치가 망가진다 → 동 수·타워에 맞게 키운다.
     const n = Math.max(1, state.buildings.length || state.cores.filter((c) => (c.kind || "building") !== "stair").length || 3);
@@ -531,7 +557,6 @@ export function generatePlate(opts = {}) {
       state.parkWidth = Math.max(state.parkWidth, minW);
       state.parkDepth = Math.max(state.parkDepth, minD);
       state.plate = plateFromState();
-      resizedComplex = true;
       notes.push(`단지형 동 ${n}개·동 외곽에 맞춰 평면을 ${state.parkWidth}×${state.parkDepth}m로 키웠습니다.`);
     }
   }
@@ -546,7 +571,7 @@ export function generatePlate(opts = {}) {
     } else {
       state.cores = [defaultCore(state.plate)];
     }
-  } else if (state.siteType === "complex" && state.buildings.length) {
+  } else if (replaceCores && state.siteType === "complex" && state.buildings.length) {
     // 평면 만들기 때 동 코어를 타워 footprint 간격으로 다시 고르게 둔다(계단 코어는 유지).
     const stairs = state.cores.filter((c) => c.kind === "stair").map((c) => clampCore(c, state.plate));
     linkBuildingsToCores(defaultCores(complexPlate(), state.buildings.length));
@@ -582,10 +607,18 @@ export function generatePlate(opts = {}) {
   state.step = 2;
   state.revealStage = 6;
   state.tool = "core";
-  // recommend=false: 램프·코어 편집용 초안만(후보 목록·추천 탐색은 7단계에서)
+  clearParkingGeometry();
+  emit();
+}
+
+/**
+ * 주차장 평면을 만든다.
+ * @param {{ recommend?: boolean }} [opts] recommend=false면 후보 목록 없이 초안만(램프·코어 편집용).
+ */
+export function generatePlate(opts = {}) {
+  preparePlateShell({ replaceCores: true });
+  // recommend=false: 단일 초안 배치(호환). 마법사는 5·6에 shell만, 7에서 recommendLayouts.
   if (opts.recommend === false) {
-    state.variants = [];
-    state.variantIndex = 0;
     optimizeLayout({ refresh: false });
     if (!(state.stalls && state.stalls.length)) {
       const one = layoutParking({
@@ -612,8 +645,8 @@ export function generatePlate(opts = {}) {
 
 /** 7단계: 램프·코어를 고정한 채 추천 후보를 다시 찾는다. */
 export function recommendLayouts() {
-  if (!state.plate) generatePlate({ recommend: false });
-  syncPlateMeta();
+  if (!state.plate) preparePlateShell();
+  else syncPlateMeta();
   refreshVariants();
   const best = Math.max(0, state.variants.findIndex((variant) => variant.recommended));
   applyVariant(best >= 0 ? best : 0);
