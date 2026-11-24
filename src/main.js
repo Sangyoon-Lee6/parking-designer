@@ -1,21 +1,21 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=277";
-import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=277";
-import { drawThumb, mountPlan } from "./plan.js?v=277";
-import { stallRuleTargets } from "./stallTypes.js?v=277";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=280";
+import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=280";
+import { drawThumb, mountPlan } from "./plan.js?v=280";
+import { stallRuleTargets } from "./stallTypes.js?v=280";
 import {
   plateDimsFromPolygon, presetChamferRect, presetL, presetTrapezoid, presetU,
   rectPolygon, validatePolygon, normalizePolygon, offsetPolygon, polygonArea, edgeLengths,
-} from "./polygon.js?v=277";
-import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=277";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, rampModuleInfo, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=277";
+} from "./polygon.js?v=280";
+import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=280";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, readyFor3d, issueGroups, rampFallback, rampModuleInfo, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=280";
 
 // 시트·DXF·주변지도는 클릭 시에만 불러 초기 로딩을 줄인다.
 let sheetMod = null;
 let dxfMod = null;
 let contextMod = null;
-const loadSheet = () => (sheetMod ||= import("./sheet.js?v=277"));
-const loadDxf = () => (dxfMod ||= import("./dxfExport.js?v=277"));
-const loadContext = () => (contextMod ||= import("./context.js?v=277"));
+const loadSheet = () => (sheetMod ||= import("./sheet.js?v=280"));
+const loadDxf = () => (dxfMod ||= import("./dxfExport.js?v=280"));
+const loadContext = () => (contextMod ||= import("./context.js?v=280"));
 async function closeContext() {
   const m = await loadContext();
   return m.closeContext();
@@ -701,13 +701,14 @@ $("tab-sheet").addEventListener("click", () => {
     state.step = 3;
     emit();
     const { drawSheet } = await loadSheet();
-    requestAnimationFrame(() => {
+    // 레이아웃이 잡힌 뒤 맞춰야 중앙·비율이 맞는다
+    requestAnimationFrame(() => requestAnimationFrame(() => {
       const info = summary();
       const canvas = $("sheet");
       if (canvas && state.plate) {
         drawSheet(canvas, state, { ...info, checkedOn: info.demand.checkedOn }, sheetFloor());
       }
-    });
+    }));
   };
   if (wizardSlide !== 7) {
     setWizard(7);
@@ -715,6 +716,10 @@ $("tab-sheet").addEventListener("click", () => {
   } else {
     show();
   }
+});
+window.addEventListener("resize", () => {
+  if ($("sheet-view")?.hidden || state.resultTab !== "sheet") return;
+  loadSheet().then(({ fitSheetCanvas }) => fitSheetCanvas($("sheet")));
 });
 if ($("tab-plan")) {
   $("tab-plan").addEventListener("click", () => {
@@ -802,7 +807,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=277")
+    sceneMount = import("./scene.js?v=280")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;

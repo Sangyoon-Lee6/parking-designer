@@ -550,17 +550,26 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .check { display: flex; align-items: center; gap: 8px; margin-top: 0; justify-content: flex-start; text-align: left; }
 .check input { width: auto; flex: none; }
 .use-fields { margin: 0 0 4px 18px; }
+/* A3 시트(1580×1040)를 스테이지 안에서 비율 유지한 채 정중앙에 둔다.
+   canvas 고유 크기가 flex/grid min-size를 키우면 좌측으로 밀리므로
+   표시 크기는 JS(fitSheetCanvas) + aspect-ratio로 맞춘다. */
 #sheet-view:not([hidden]) {
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   z-index: 3;
   background: #e8eef4;
   overflow: auto;
+  padding: 12px;
+  box-sizing: border-box;
 }
 #sheet {
-  width: min(100%, 1580px);
-  height: auto;
-  max-height: calc(100% - 16px);
+  flex: none;
+  display: block;
+  margin: auto;
+  /* 표시 크기(width/height)는 fitSheetCanvas가 A3 비율로 지정 */
+  max-width: 100%;
+  max-height: 100%;
   background: #fff;
   object-fit: contain;
   box-shadow: var(--shadow);

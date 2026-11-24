@@ -1,6 +1,6 @@
-import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint, siteMarginsOf } from "./layout.js?v=277";
-import { buildChain, slopePlan } from "./rampModules.js?v=277";
-import { polygonFromPlate } from "./polygon.js?v=277";
+import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint, siteMarginsOf } from "./layout.js?v=280";
+import { buildChain, slopePlan } from "./rampModules.js?v=280";
+import { polygonFromPlate } from "./polygon.js?v=280";
 
 const EDGE = { n: "북", e: "동", s: "남", w: "서" };
 
@@ -406,9 +406,23 @@ ${parts.join("\n")}
   };
 }
 
+/** 뷰포트 안에 A3 비율로 맞춰 표시 크기만 조정(비트맵은 1580×1040 유지). */
+export function fitSheetCanvas(canvas) {
+  if (!canvas) return;
+  const parent = canvas.parentElement;
+  if (!parent) return;
+  const pad = 24;
+  const availW = Math.max(80, parent.clientWidth - pad);
+  const availH = Math.max(80, parent.clientHeight - pad);
+  const scale = Math.min(availW / 1580, availH / 1040, 1);
+  canvas.style.width = `${Math.round(1580 * scale)}px`;
+  canvas.style.height = `${Math.round(1040 * scale)}px`;
+}
+
 export function drawSheet(canvas, state, info, floorIndex) {
   const ctx = canvas.getContext("2d");
   renderSheet(canvasPainter(ctx), state, info, floorIndex);
+  fitSheetCanvas(canvas);
 }
 
 export function sheetSvg(state, info, floorIndex) {
