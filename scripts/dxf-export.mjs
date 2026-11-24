@@ -1,7 +1,7 @@
 // CAD 내보내기 검사: node scripts/dxf-export.mjs
 import { writeFileSync } from "fs";
-import { referenceCase, layoutParking, minStraightRampLength, rampTransitions } from "../src/layout.js?v=281";
-import { buildDxf, LAYERS, STALL_LAYER, dxfText, dxfToDwg, cadFilename } from "../src/dxfExport.js?v=281";
+import { referenceCase, layoutParking, minStraightRampLength, rampTransitions } from "../src/layout.js?v=282";
+import { buildDxf, LAYERS, STALL_LAYER, dxfText, dxfToDwg, cadFilename } from "../src/dxfExport.js?v=282";
 
 let fails = 0;
 const expect = (cond, msg) => {

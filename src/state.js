@@ -1,4 +1,4 @@
-import { calculateDemand, emptyDemand } from "./demand.js?v=277";
+import { calculateDemand, emptyDemand } from "./demand.js?v=282";
 import {
   basementCount,
   bestLayoutFor,
@@ -19,7 +19,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=277";
+} from "./layout.js?v=282";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -33,7 +33,7 @@ import {
   slopePlan,
   analyzeOnPlate,
   buildChain,
-} from "./rampModules.js?v=277";
+} from "./rampModules.js?v=282";
 import {
   normalizePolygon,
   outsideBlockRects,
@@ -42,7 +42,7 @@ import {
   polygonFromPlate,
   rectPolygon,
   validatePolygon,
-} from "./polygon.js?v=277";
+} from "./polygon.js?v=282";
 
 export const state = {
   step: 1,
@@ -512,7 +512,11 @@ function seedAccess() {
   if (state.plate) state.ramps = state.ramps.map((r) => ensureModules(r, state.plate));
 }
 
-export function generatePlate() {
+/**
+ * 주차장 평면을 만든다.
+ * @param {{ recommend?: boolean }} [opts] recommend=false면 후보 목록 없이 초안만(램프·코어 편집용).
+ */
+export function generatePlate(opts = {}) {
   const notes = [];
   state.plate = plateFromState();
   let resizedComplex = false;
@@ -575,13 +579,44 @@ export function generatePlate() {
   }
   seedAccess();
   state.referenceNotes = notes;
-  refreshVariants();
-  const best = Math.max(0, state.variants.findIndex((variant) => variant.recommended));
   state.step = 2;
   state.revealStage = 6;
   state.tool = "core";
+  // recommend=false: 램프·코어 편집용 초안만(후보 목록·추천 탐색은 7단계에서)
+  if (opts.recommend === false) {
+    state.variants = [];
+    state.variantIndex = 0;
+    optimizeLayout({ refresh: false });
+    if (!(state.stalls && state.stalls.length)) {
+      const one = layoutParking({
+        plate: state.plate,
+        cores: state.cores,
+        openings: state.openings,
+        ramps: state.ramps,
+        rampPlacement: state.rampPlacement,
+        entranceMode: state.entranceMode,
+        circulation: state.circulation,
+        lockRamp: true,
+        noCoreRescue: true,
+      });
+      if (one) adopt(one, true);
+    }
+    emit();
+    return;
+  }
+  refreshVariants();
+  const best = Math.max(0, state.variants.findIndex((variant) => variant.recommended));
   applyVariant(best);
   // 마법사 슬라이드는 main.js가 유지한다(생성 후 램프 단계에 머묾).
+}
+
+/** 7단계: 램프·코어를 고정한 채 추천 후보를 다시 찾는다. */
+export function recommendLayouts() {
+  if (!state.plate) generatePlate({ recommend: false });
+  syncPlateMeta();
+  refreshVariants();
+  const best = Math.max(0, state.variants.findIndex((variant) => variant.recommended));
+  applyVariant(best >= 0 ? best : 0);
 }
 
 export function loadReference() {

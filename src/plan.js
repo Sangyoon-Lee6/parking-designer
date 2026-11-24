@@ -1,14 +1,14 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=277";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=282";
 import {
   analyzeOnPlate, buildChain, slopePlan, usesModuleLayout,
-} from "./rampModules.js?v=277";
+} from "./rampModules.js?v=282";
 import {
   polygonFromPlate, snapPoint, edgeLengths, polygonArea,
-} from "./polygon.js?v=277";
+} from "./polygon.js?v=282";
 import {
   emit, moveOpening, moveRamp, moveRampFree, placeOpening, placeRamp,
   selectCore, selectItem, setParkPolygon, state, subscribe, updateCore,
-} from "./state.js?v=277";
+} from "./state.js?v=282";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";

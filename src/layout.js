@@ -1,4 +1,4 @@
-import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=277";
+import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=282";
 import {
   externalCurve90Shape,
   lowerFloorRamp,
@@ -6,14 +6,14 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=277";
-import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=277";
+} from "./rampForms.js?v=282";
+import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=282";
 import {
   analyzeOnPlate,
   slopePlan,
   usesModuleLayout,
   buildChain,
-} from "./rampModules.js?v=277";
+} from "./rampModules.js?v=282";
 import {
   polygonFromPlate,
   rectPolygon,
@@ -21,7 +21,7 @@ import {
   outsideBlockRects,
   isRectangularPlate,
   insetPolygon,
-} from "./polygon.js?v=277";
+} from "./polygon.js?v=282";
 
 export {
   lowerFloorRamp,
@@ -29,8 +29,8 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=277";
-export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=277";
+} from "./rampForms.js?v=282";
+export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=282";
 
 /** 모듈 사슬 램프의 평면 분석(legacy 동등이면 null). */
 function moduleSiteOf(ramp, plate, blocks = []) {

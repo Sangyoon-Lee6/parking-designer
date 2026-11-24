@@ -842,21 +842,21 @@ label.tight { display: grid; gap: 4px; margin: 8px 0; }
   list-style: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 3px;
   margin: 0;
   padding: 0;
   justify-content: flex-end;
-  max-width: min(720px, 70vw);
+  max-width: min(900px, 78vw);
 }
 
 .wizard-steps li {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px 8px 8px;
+  gap: 5px;
+  padding: 6px 10px 6px 6px;
   border-radius: 999px;
   color: var(--muted);
-  font-size: var(--font-sm);
+  font-size: 13px;
   cursor: pointer;
   border: 1px solid transparent;
   transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, filter 0.25s ease;
@@ -989,17 +989,21 @@ body[data-wizard="4"] .shell {
 }
 
 body[data-wizard="5"] .shell,
-body[data-wizard="6"] .shell {
+body[data-wizard="6"] .shell,
+body[data-wizard="7"] .shell,
+body[data-wizard="8"] .shell {
   grid-template-columns: minmax(0, 1fr) minmax(300px, 400px);
 }
 
-body[data-wizard="7"] .shell {
+body[data-wizard="7"] .shell,
+body[data-wizard="8"] .shell {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
 }
 
 body[data-wizard="5"] #plan-view .toolbar-actions,
 body[data-wizard="6"] #plan-view .toolbar-actions,
-body[data-wizard="7"] #plan-view .toolbar-actions {
+body[data-wizard="7"] #plan-view .toolbar-actions,
+body[data-wizard="8"] #plan-view .toolbar-actions {
   display: flex;
 }
 
@@ -1010,13 +1014,18 @@ body[data-wizard="4"] #plan-view .toolbar-actions {
   display: none;
 }
 
+/* 추천은 7단계 목록으로 — 5·6 비교 독은 쓰지 않음 */
 body[data-wizard="5"] #compare-dock,
-body[data-wizard="6"] #compare-dock {
-  display: flex;
+body[data-wizard="6"] #compare-dock,
+body[data-wizard="7"] #compare-dock,
+body[data-wizard="8"] #compare-dock {
+  display: none !important;
 }
 
 body[data-wizard="5"] #plan,
-body[data-wizard="6"] #plan {
+body[data-wizard="6"] #plan,
+body[data-wizard="7"] #plan,
+body[data-wizard="8"] #plan {
   pointer-events: auto;
   cursor: crosshair;
 }

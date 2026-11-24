@@ -4,9 +4,9 @@
  * 한글: \U+XXXX 이스케이프, 스타일 malgun.ttf.
  * 레이어별 ACI 색으로 기둥·코어·주차칸 종류를 구분한다.
  */
-import { closedRing, polygonFromPlate } from "./polygon.js?v=281";
-import { rampFootprint, rampShape, siteMarginsOf } from "./layout.js?v=281";
-import { buildChain } from "./rampModules.js?v=281";
+import { closedRing, polygonFromPlate } from "./polygon.js?v=282";
+import { rampFootprint, rampShape, siteMarginsOf } from "./layout.js?v=282";
+import { buildChain } from "./rampModules.js?v=282";
 
 /** [name, ACI color, linetype] — 색은 모두 다르게 (주차 종류·기둥·코어 구분) */
 const LAYERS = [
