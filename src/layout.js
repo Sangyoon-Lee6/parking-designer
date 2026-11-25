@@ -8,7 +8,7 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=285";
+} from "./rampForms.js?v=286";
 import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=284";
 import {
   analyzeOnPlate,
@@ -33,7 +33,7 @@ export {
   spiralRampShape,
   externalBend9090Shape,
   externalUTurn180Shape,
-} from "./rampForms.js?v=285";
+} from "./rampForms.js?v=286";
 export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=284";
 
 /** 모듈 사슬 램프의 평면 분석(legacy 동등이면 null). */
@@ -505,17 +505,23 @@ function rampShapeRaw(ramp, plate) {
 
   const external = (ramp.placement || "internal") === "external";
   const helpers = { localFrame, arcSectors, straightDrop, straightSegments, rectPoly };
-  // 외부형 진입: 90° / 90·직선·90 / 180° / (예전 외곽 회전→90·직선·90)
+  // 외부형: 직선+90°(출입) / 90·직선·90(U) / 180° 나선 / 구 spiral→180 나선
   if (external && (form === "curve90" || form === "outer9090" || form === "outer180" || form === "spiral")) {
-    if (form === "outer180") return externalUTurn180Shape(ramp, plate, helpers);
-    if (form === "outer9090" || form === "spiral") {
+    if (form === "outer180" || form === "spiral") {
+      const u = externalUTurn180Shape(ramp, plate, helpers);
+      if (u.ok) return u;
+      const bend = externalBend9090Shape(ramp, plate, helpers);
+      if (bend.ok) return { ...bend, fallbackFrom: form };
+      return { ...externalCurve90Shape(ramp, plate, helpers), fallbackFrom: form };
+    }
+    if (form === "outer9090") {
       const bend = externalBend9090Shape(ramp, plate, helpers);
       if (bend.ok) return bend;
-      // 이격이 모자라면 180° 또는 단일 90°로 대체
       const u = externalUTurn180Shape(ramp, plate, helpers);
       if (u.ok) return { ...u, reason: bend.reason || u.reason, fallbackFrom: form };
       return { ...externalCurve90Shape(ramp, plate, helpers), fallbackFrom: form };
     }
+    // curve90 = 직선 후 90° (출입 참조)
     return externalCurve90Shape(ramp, plate, helpers);
   }
   if (external) {

@@ -6,7 +6,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>주차장 설계</title>
-    <link rel="stylesheet" href="styles.css?v=285" />
+    <link rel="stylesheet" href="styles.css?v=286" />
     <script type="importmap">
       {
         "imports": {
@@ -410,36 +410,36 @@
             <div class="choice" data-for="ramp-form" role="group">
               <button type="button" data-value="auto" class="on">자동</button>
               <button type="button" data-value="straight">직선</button>
-              <button type="button" data-value="curve90">90°</button>
+              <button type="button" data-value="curve90">직선+90°</button>
               <button type="button" data-value="outer9090">90·직선·90</button>
-              <button type="button" data-value="outer180">180°</button>
+              <button type="button" data-value="outer180">180° 나선</button>
             </div>
             <select id="ramp-form" class="choice-source" tabindex="-1" aria-hidden="true">
               <option value="auto">자동</option>
               <option value="straight">직선</option>
-              <option value="curve90">90° 곡선</option>
-              <option value="outer9090">90·직선·90</option>
-              <option value="outer180">180° 회전</option>
+              <option value="curve90">직선+90° (출입)</option>
+              <option value="outer9090">90·직선·90 (U자)</option>
+              <option value="outer180">180° 나선</option>
               <option value="spiral">외곽 회전(구)</option>
             </select>
           </div>
           <div class="field">
-            <span class="field-label">층간 램프 (B2↓) <span class="info" tabindex="0" title="B1→B2 이하. 출입과 독립. «출입과 같음»만 출입 형태를 따릅니다. 평면의 초록 점선 램프를 끌어 위치를 바꿀 수 있습니다.">ⓘ</span></span>
+            <span class="field-label">층간 램프 (B2↓) <span class="info" tabindex="0" title="B1→B2 이하. 출입과 완전히 독립(위치·형태). 평면의 초록 점선 램프를 끌어 옮기세요.">ⓘ</span></span>
             <div class="choice" data-for="lower-ramp-form" role="group">
               <button type="button" data-value="auto" class="on">자동</button>
               <button type="button" data-value="same">출입과 같음</button>
               <button type="button" data-value="straight">직선</button>
-              <button type="button" data-value="curve90">90°</button>
+              <button type="button" data-value="curve90">직선+90°</button>
               <button type="button" data-value="outer9090">90·직선·90</button>
-              <button type="button" data-value="outer180">180°</button>
+              <button type="button" data-value="outer180">180° 나선</button>
             </div>
             <select id="lower-ramp-form" class="choice-source" tabindex="-1" aria-hidden="true">
               <option value="auto">자동</option>
               <option value="same">출입과 같음</option>
               <option value="straight">직선</option>
-              <option value="curve90">90° 곡선</option>
-              <option value="outer9090">90·직선·90</option>
-              <option value="outer180">180° 회전</option>
+              <option value="curve90">직선+90°</option>
+              <option value="outer9090">90·직선·90 (U자)</option>
+              <option value="outer180">180° 나선</option>
               <option value="spiral">외곽 회전(구)</option>
             </select>
           </div>
@@ -731,7 +731,7 @@
     <button id="plan-expand-hit" type="button" hidden>expand</button>
     <button id="collapse-plan" type="button" hidden>접기</button>
 
-    <script type="module" src="src/main.js?v=285"></script>
+    <script type="module" src="src/main.js?v=286"></script>
     <div id="busy" class="busy" hidden role="status" aria-live="polite">
       <div class="busy-box"><span class="spinner"></span><span id="busy-text">평면 만드는 중…</span></div>
     </div>

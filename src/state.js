@@ -12,6 +12,7 @@ import {
   generateVariants,
   intervalsOverlap,
   layoutParking,
+  lowerFloorRamp,
   rampShape,
   referenceCase,
   siteMarginsOf,
@@ -19,7 +20,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=285";
+} from "./layout.js?v=286";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -1070,6 +1071,7 @@ export function placeRamp(edge, t) {
 }
 
 export function moveRamp(id, edge, t) {
+  pinLowerRampOverrides();
   const index = state.ramps.findIndex((item) => item.id === id);
   if (index < 0) return;
   // 사슬 램프(이미 모듈 편집됨)는 예전 edge 끌기가 아니라 시작점 평행 이동으로 바꾼다(프롬프트 4).
@@ -1101,6 +1103,34 @@ export function moveRamp(id, edge, t) {
   emit();
 }
 
+/**
+ * 출입 램프를 바꾸기 전에 현재 층간 위치를 고정한다.
+ * (덮어쓰기가 없으면 파생 위치를 스냅샷 → 이후 출입 변경에 끌려가지 않음)
+ */
+export function pinLowerRampOverrides() {
+  if (!state.plate || !(state.ramps && state.ramps.length)) return;
+  const mode = state.lowerRampMode || "alternate";
+  const form = state.lowerRampForm || "auto";
+  const plate = {
+    ...state.plate,
+    lowerRampForm: form,
+    lowerRampMode: mode,
+    lowerRampOverrides: state.lowerRampOverrides || {},
+  };
+  const next = { ...(state.lowerRampOverrides || {}) };
+  for (const g of state.ramps) {
+    if (next[g.id] || next[String(g.id)]) continue;
+    const low = lowerFloorRamp(g, plate, mode, form, null);
+    if (!low) continue;
+    next[g.id] = {
+      edge: low.edge,
+      t: low.t,
+      placement: low.placement || "internal",
+    };
+  }
+  state.lowerRampOverrides = next;
+}
+
 /** 층간 램프(B2↓) 위치 덮어쓰기 — 출입과 독립 조정. */
 export function moveLowerRamp(groundId, edge, t, { live = false } = {}) {
   if (!state.plate) return;
@@ -1127,6 +1157,10 @@ export function moveLowerRamp(groundId, edge, t, { live = false } = {}) {
  *  건축선~이격 사이(대지 여유)까지 허용. 외곽 회전이 밖으로 나가면 외부형으로 맞춘다.
  */
 export function moveRampFree(id, x, y, { live = false } = {}) {
+  if (!live) pinLowerRampOverrides();
+  else if (!(state.lowerRampOverrides && Object.keys(state.lowerRampOverrides).length)) {
+    pinLowerRampOverrides();
+  }
   const index = state.ramps.findIndex((item) => item.id === id);
   if (index < 0 || !state.plate) return;
   let cur = ensureModules(state.ramps[index], state.plate);

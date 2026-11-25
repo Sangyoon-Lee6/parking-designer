@@ -670,10 +670,12 @@ export function externalCurve90Shape(ramp, plate, helpers) {
 }
 
 /**
- * 외부 90°·직선·90°: 건축선 밖에서 한 번 꺾고 변을 따라가다 다시 꺾어 평면 안으로 들어온다.
+ * 참조 도면형 90°·직선·90° (U자): 건축선 밖 두 평행 차로를
+ * 바깥 90° → 직선 → 90°로 잇는다. (사진1)
+ * local: +v=안쪽, −v=바깥. ramp.t = U 중심.
  */
 export function externalBend9090Shape(ramp, plate, helpers) {
-  const { localFrame, arcSectors, straightDrop, straightSegments, rectPoly } = helpers;
+  const { localFrame, rectPoly } = helpers;
   const H = floorHeightOf(plate);
   const tr = rampTransitions(plate, ramp.level === "lower" ? "lower" : "ground");
   const W = Math.max(AISLE, ramp.width || AISLE, RAMP_CURVE_W);
@@ -683,269 +685,60 @@ export function externalBend9090Shape(ramp, plate, helpers) {
   const vertical = ramp.edge === "n" || ramp.edge === "s";
   const along = vertical ? plate.width : plate.depth;
   const toLocal = localFrame(ramp.edge, plate);
-  const sgn = ramp.t <= along / 2 ? 1 : -1;
+  const m = plate.siteMargin == null ? 20 : Number(plate.siteMargin);
 
-  // 바깥 짧은 돌출 → 1차 90° → 바깥 평행 직선 → 2차 90°(진입) → 안쪽 직선
-  const sOut = Math.max(2, Math.min(8, Number(ramp.length) || 8));
+  // 바깥 평행 직선 길이(격자 1~2스팬). 돌출 ≈ Ro
+  const sSide = Math.max(6, Math.min(Math.max(0, m - Ro), Math.max(8, (Number(ramp.length) || 18) * 0.4)));
   const arc = (Math.PI / 2) * Rc;
-  const m = plate.siteMargin == null ? 20 : Number(plate.siteMargin);
-  const sideBudget = Math.max(6, m - Ro);
-  const sSide = Math.max(6, Math.min(sideBudget, Math.max(8, (Number(ramp.length) || 18) * 0.35)));
-
-  const dropOut = straightDrop(sOut, tr.top);
-  const dropArc1 = arc * RAMP_SLOPE_CURVE;
-  const dropSide = sSide * RAMP_SLOPE_STRAIGHT;
-  const dropArc2 = arc * RAMP_SLOPE_CURVE;
-  const bottomDrop = Math.min(H, tr.bottom * GENTLE_SLOPE);
-  const used = dropOut + dropArc1 + dropSide + dropArc2;
-  const rest = Math.max(0, H - bottomDrop - used);
-  const ease = rest + used + bottomDrop > 0
-    ? Math.min(1, H / Math.max(1e-6, used + bottomDrop + rest))
-    : 1;
-  const sInMain = rest > 0 ? Math.ceil((rest / RAMP_SLOPE_STRAIGHT) * 10) / 10 : Math.max(4, tr.bottom);
-  const sIn = round1(sInMain + (rest > 0 ? tr.bottom : 0));
+  const lip = Math.max(2.4, W * 0.45); // 벽 안쪽 입·출구 짧은 직선
+  const totalLen = lip + arc + sSide + arc + lip;
+  const ease = Math.min(1, H / Math.max(1e-6, totalLen * RAMP_SLOPE_CURVE));
 
   let reason = "";
-  const needMargin = round1(Math.max(sOut, Ro));
-  if (needMargin > m + 0.05) {
-    reason = `90·직선·90 램프가 대지 여유 ${m}m를 넘습니다(필요 약 ${needMargin}m)`;
-  }
+  if (Ro > m + 0.05) reason = `90·직선·90 램프가 대지 여유 ${m}m를 넘습니다(필요 약 ${round1(Ro)}m)`;
 
-  // 국소: v=바깥(-), u=변 방향. 1차 회전 중심 (uc1,vc1), 2차 (uc2,vc2)
-  const vWall = 0;
-  const vOuter = -Ro;
-  const uc1 = ramp.t + sgn * Rc;
-  const vc1 = vWall;
-  const uc2 = uc1 + sgn * sSide;
-  const vc2 = vOuter;
+  // 두 모서리 중심 · 입·출구 (벽에 붙음)
+  const u1 = clamp(ramp.t - sSide / 2, Rc + 1, along - Rc - 1 - sSide);
+  const u2 = u1 + sSide;
+  const mouthA = u1 - Rc; // 시작 입구
+  const mouthB = u2 + Rc; // 끝 출구
 
-  const piecesLocal = [
-    { u0: ramp.t - W / 2, u1: ramp.t + W / 2, v0: -sOut, v1: vWall },
-    ...arcSectors(uc1, vc1, Ri, Ri + W, sgn, 3),
-  ];
-  // 바깥 평행 띠 (v = -Ro .. -Ri)
-  piecesLocal.push({
-    u0: Math.min(uc1, uc2),
-    u1: Math.max(uc1, uc2),
-    v0: -Ro,
-    v1: -Ri,
-  });
-  // 2차 90°: 바깥에서 벽 쪽으로 (부호 반대로 안쪽 진입)
-  piecesLocal.push(...arcSectors(uc2, 0, Ri, Ri + W, -sgn, 3).map((p) => ({
-    ...p,
-    // arcSectors는 vc=0 기준 — 바깥 평행선 끝에서 벽으로 말아 들임
-  })));
-  // 안쪽 진입 직선
-  const uIn0 = uc2;
-  const uIn1 = uc2 + sgn * sIn;
-  piecesLocal.push({
-    u0: Math.min(uIn0, uIn1),
-    u1: Math.max(uIn0, uIn1),
-    v0: Ri,
-    v1: Ri + W,
-  });
-
-  // 2차 회전을 벽 모서리(vc=0)가 아니라 바깥 끝에서 안쪽으로: 수동 섹터
-  const arc2Local = [];
-  const steps = 8;
-  for (let i = 0; i < steps; i += 1) {
-    const a0 = (i / steps) * (Math.PI / 2);
-    const a1 = ((i + 1) / steps) * (Math.PI / 2);
-    // 시작: 바깥 평행(방향 sgn), 끝: 안쪽(+v)
-    // 중심을 (uc2, -Rc)에 두고 π→π/2 또는 0→-π/2
-    const cx = uc2;
-    const cy = -Rc;
-    const th0 = sgn > 0 ? Math.PI - a0 : a0;
-    const th1 = sgn > 0 ? Math.PI - a1 : a1;
-    void th0;
-    void th1;
-    void cx;
-    void cy;
-  }
-  // pieces를 단순화: footprint AABB + 경로 위주 (점유는 path/approach)
+  // 폴리: 바깥 U 띠 (AABB 조각)
   const pieces = [
-    toLocal.rect({ u0: ramp.t - W / 2, u1: ramp.t + W / 2, v0: -sOut, v1: 0 }),
-    toLocal.rect({
-      u0: Math.min(ramp.t, uc2 + sgn * Ro) - W / 2,
-      u1: Math.max(ramp.t, uc2 + sgn * Ro) + W / 2,
-      v0: -Ro,
-      v1: 0,
-    }),
-    toLocal.rect({
-      u0: Math.min(uIn0, uIn1),
-      u1: Math.max(uIn0, uIn1),
-      v0: 0,
-      v1: Ri + W,
-    }),
+    toLocal.rect({ u0: mouthA - W / 2, u1: mouthA + W / 2, v0: 0, v1: lip }),
+    toLocal.rect({ u0: u1 - Ro, u1: u1 + Ro, v0: -Ro, v1: 0 }),
+    toLocal.rect({ u0: u1, u1: u2, v0: -Ro, v1: -Ri }),
+    toLocal.rect({ u0: u2 - Ro, u1: u2 + Ro, v0: -Ro, v1: 0 }),
+    toLocal.rect({ u0: mouthB - W / 2, u1: mouthB + W / 2, v0: 0, v1: lip }),
   ];
 
   const at = (p, h) => ({ ...p, h: round3(h) });
-  const path = [at(toLocal.pt(ramp.t, -sOut, 0), 0)];
+  const path = [];
   let sAcc = 0;
   let hAcc = 0;
-  const push = (u, v, ds, slope) => {
+  const pushUV = (u, v, ds, slope) => {
     sAcc += ds;
     hAcc = Math.min(H, hAcc + ds * slope * ease);
     path.push(at(toLocal.pt(u, v, sAcc), hAcc));
   };
-  // 바깥 직선
-  push(ramp.t, 0, sOut, RAMP_SLOPE_STRAIGHT);
-  // 1차 90°
+
+  // 1) 입구 직선 (안 → 벽)
+  pushUV(mouthA, lip, 0, 0);
+  pushUV(mouthA, 0, lip, RAMP_SLOPE_STRAIGHT);
+  // 2) 1차 90°: 중심 (u1,0), θ=π → 3π/2 (벽 왼쪽 → 바깥)
   for (let i = 1; i <= 12; i += 1) {
-    const th = Math.PI - (i / 12) * (Math.PI / 2);
-    const u = uc1 + sgn * Rc * Math.cos(th);
-    const v = vc1 + Rc * Math.sin(th);
-    const prev = path[path.length - 1];
-    const world = toLocal.pt(u, v, 0);
-    const ds = Math.hypot(world.x - prev.x, world.y - prev.y);
-    push(u, v, ds || arc / 12, RAMP_SLOPE_CURVE);
+    const a = Math.PI + (i / 12) * (Math.PI / 2);
+    pushUV(u1 + Rc * Math.cos(a), Rc * Math.sin(a), arc / 12, RAMP_SLOPE_CURVE);
   }
-  // 바깥 평행
-  push(uc2, -Rc, sSide, RAMP_SLOPE_STRAIGHT);
-  // 2차 90° (바깥 → 안)
+  // 3) 바깥 평행
+  pushUV(u2, -Rc, sSide, RAMP_SLOPE_STRAIGHT);
+  // 4) 2차 90°: 중심 (u2,0), θ=3π/2 → 2π (바깥 → 벽 오른쪽)
   for (let i = 1; i <= 12; i += 1) {
-    const th = (sgn > 0 ? Math.PI : 0) + (sgn > 0 ? -1 : 1) * (i / 12) * (Math.PI / 2);
-    // 중심 (uc2, -Rc): 시작 각도 π(왼쪽)에서 π/2(위/안) 또는 0→-π/2
-    const a0 = sgn > 0 ? Math.PI : 0;
-    const a = a0 + (sgn > 0 ? -1 : 1) * (i / 12) * (Math.PI / 2);
-    const u = uc2 + Rc * Math.cos(a);
-    const v = -Rc + Rc * Math.sin(a);
-    const prev = path[path.length - 1];
-    const world = toLocal.pt(u, v, 0);
-    const ds = Math.hypot(world.x - prev.x, world.y - prev.y);
-    push(u, v, ds || arc / 12, RAMP_SLOPE_CURVE);
+    const a = (Math.PI * 1.5) + (i / 12) * (Math.PI / 2);
+    pushUV(u2 + Rc * Math.cos(a), Rc * Math.sin(a), arc / 12, RAMP_SLOPE_CURVE);
   }
-  // 안쪽 직선
-  if (sIn > 0) push(uc2 + sgn * sIn, Rc, sIn, RAMP_SLOPE_STRAIGHT);
-  if (hAcc < H - 0.05) {
-    // 남은 낙차 보정
-    const last = path[path.length - 1];
-    path.push({ ...last, h: H, s: round3(sAcc + 0.01) });
-    hAcc = H;
-  }
-
-  const polygons = pieces.map(rectPoly);
-  const xs = path.map((p) => p.x);
-  const ys = path.map((p) => p.y);
-  const pad = W / 2;
-  const footprint = {
-    x: round3(Math.min(...xs) - pad),
-    y: round3(Math.min(...ys) - pad),
-    w: round3(Math.max(...xs) - Math.min(...xs) + 2 * pad),
-    d: round3(Math.max(...ys) - Math.min(...ys) + 2 * pad),
-  };
-
-  void arc2Local;
-  void piecesLocal;
-  void dropSide;
-  void dropArc1;
-  void dropArc2;
-  void dropOut;
-  void straightSegments;
-  void arcSectors;
-
-  return {
-    kind: "curved",
-    ok: !reason && path.length > 4,
-    reason,
-    pieces,
-    polygons,
-    path,
-    segments: [
-      { name: "바깥 직선", length: round1(sOut), drop: round3(dropOut * ease), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
-      { name: "1차 90°", length: round1(arc), drop: round3(dropArc1 * ease), slope: round3(RAMP_SLOPE_CURVE * ease) },
-      { name: "바깥 평행", length: round1(sSide), drop: round3(dropSide * ease), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
-      { name: "2차 90° 진입", length: round1(arc), drop: round3(dropArc2 * ease), slope: round3(RAMP_SLOPE_CURVE * ease) },
-      { name: "안쪽 직선", length: round1(sIn), drop: round3(Math.max(0, H - (used * ease))), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
-    ],
-    total: round1(sAcc),
-    approach: pieces[pieces.length - 1],
-    lip: pieces[pieces.length - 1],
-    turn: sgn,
-    externalCurve: true,
-    outerKind: "outer9090",
-    footprint,
-  };
-}
-
-/**
- * 외부 180° 회전: 건축선 밖에서 U턴해 같은 변으로 평면 안에 들어온다.
- */
-export function externalUTurn180Shape(ramp, plate, helpers) {
-  const { localFrame, straightDrop, rectPoly } = helpers;
-  const H = floorHeightOf(plate);
-  const tr = rampTransitions(plate, ramp.level === "lower" ? "lower" : "ground");
-  const W = Math.max(AISLE, ramp.width || AISLE, RAMP_CURVE_W);
-  const Ri = innerCurveRadius(plate);
-  const Rc = Ri + W / 2;
-  const Ro = Ri + W;
-  const vertical = ramp.edge === "n" || ramp.edge === "s";
-  const along = vertical ? plate.width : plate.depth;
-  const toLocal = localFrame(ramp.edge, plate);
-  const sgn = ramp.t <= along / 2 ? 1 : -1;
-
-  const sOut = Math.max(tr.top + 2, Math.min(12, Number(ramp.length) || 10));
-  const arc = Math.PI * Rc; // 180°
-  const m = plate.siteMargin == null ? 20 : Number(plate.siteMargin);
-  const dropOut = straightDrop(sOut, tr.top);
-  const dropArc = arc * RAMP_SLOPE_CURVE;
-  const bottomDrop = Math.min(H, tr.bottom * GENTLE_SLOPE);
-  const rest = Math.max(0, H - bottomDrop - dropOut - dropArc);
-  const ease = Math.min(1, H / Math.max(1e-6, dropOut + dropArc + bottomDrop + rest));
-  const sInMain = rest > 0 ? Math.ceil((rest / RAMP_SLOPE_STRAIGHT) * 10) / 10 : Math.max(4, tr.bottom);
-  const sIn = round1(sInMain);
-
-  let reason = "";
-  // U턴 바깥 돌출 ≈ 2·Rc (중심선 반경)
-  const needMargin = round1(Math.max(sOut, 2 * Rc + 0.5));
-  if (needMargin > m + 0.05) {
-    reason = `180° 회전 램프가 대지 여유 ${m}m를 넘습니다(필요 약 ${needMargin}m)`;
-  }
-
-  // U턴 중심: 벽 밖 Rc, 진입 차로와 출차로 간격 = 2*Rc
-  const uc = ramp.t + sgn * Rc;
-  const vc = -Rc;
-
-  const pieces = [
-    toLocal.rect({ u0: ramp.t - W / 2, u1: ramp.t + W / 2, v0: -sOut, v1: 0 }),
-    toLocal.rect({
-      u0: Math.min(ramp.t, uc + sgn * Ro) - 0.5,
-      u1: Math.max(ramp.t, uc + sgn * Ro) + 0.5,
-      v0: -2 * Ro,
-      v1: 0,
-    }),
-    toLocal.rect({
-      u0: Math.min(uc + sgn * Rc - W / 2, uc + sgn * Rc + sgn * sIn),
-      u1: Math.max(uc + sgn * Rc - W / 2, uc + sgn * Rc + sgn * sIn),
-      v0: 0,
-      v1: Math.max(sIn, Ri + W),
-    }),
-  ];
-
-  const at = (p, h) => ({ ...p, h: round3(h) });
-  const path = [at(toLocal.pt(ramp.t, -sOut, 0), 0)];
-  let sAcc = 0;
-  let hAcc = 0;
-  const push = (u, v, ds, slope) => {
-    sAcc += ds;
-    hAcc = Math.min(H, hAcc + ds * slope * ease);
-    path.push(at(toLocal.pt(u, v, sAcc), hAcc));
-  };
-  push(ramp.t, 0, sOut, RAMP_SLOPE_STRAIGHT);
-  // 180°: 시작 각도 π/2(벽쪽)에서 바깥으로 돌아 3π/2 또는 대칭
-  const aStart = Math.PI / 2;
-  const aEnd = aStart + sgn * Math.PI;
-  for (let i = 1; i <= 24; i += 1) {
-    const a = aStart + (aEnd - aStart) * (i / 24);
-    const u = uc + Rc * Math.cos(a);
-    const v = vc + Rc * Math.sin(a);
-    const prev = path[path.length - 1];
-    const world = toLocal.pt(u, v, 0);
-    const ds = Math.hypot(world.x - prev.x, world.y - prev.y);
-    push(u, v, ds || arc / 24, RAMP_SLOPE_CURVE);
-  }
-  const uIn = uc + sgn * Rc;
-  if (sIn > 0) push(uIn, sIn, sIn, RAMP_SLOPE_STRAIGHT);
+  // 5) 출구 직선 (벽 → 안)
+  pushUV(mouthB, lip, lip, RAMP_SLOPE_STRAIGHT);
   if (hAcc < H - 0.05) {
     const last = path[path.length - 1];
     path.push({ ...last, h: H });
@@ -956,20 +749,122 @@ export function externalUTurn180Shape(ramp, plate, helpers) {
   const pad = W / 2;
   return {
     kind: "curved",
-    ok: !reason && path.length > 4,
+    ok: !reason && path.length > 6,
     reason,
     pieces,
     polygons: pieces.map(rectPoly),
     path,
     segments: [
-      { name: "바깥 직선", length: round1(sOut), drop: round3(dropOut * ease), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
-      { name: "180° 회전", length: round1(arc), drop: round3(dropArc * ease), slope: round3(RAMP_SLOPE_CURVE * ease) },
-      { name: "안쪽 직선", length: round1(sIn), drop: round3(Math.max(0, H - (dropOut + dropArc) * ease)), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
+      { name: "입구 직선", length: round1(lip), drop: round3(lip * RAMP_SLOPE_STRAIGHT * ease), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
+      { name: "1차 90°", length: round1(arc), drop: round3(arc * RAMP_SLOPE_CURVE * ease), slope: round3(RAMP_SLOPE_CURVE * ease) },
+      { name: "바깥 직선", length: round1(sSide), drop: round3(sSide * RAMP_SLOPE_STRAIGHT * ease), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
+      { name: "2차 90°", length: round1(arc), drop: round3(arc * RAMP_SLOPE_CURVE * ease), slope: round3(RAMP_SLOPE_CURVE * ease) },
+      { name: "출구 직선", length: round1(lip), drop: round3(Math.max(0, H - hAcc + lip * RAMP_SLOPE_STRAIGHT * ease)), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
     ],
     total: round1(sAcc),
     approach: pieces[pieces.length - 1],
-    lip: pieces[pieces.length - 1],
-    turn: sgn,
+    lip: pieces[0],
+    turn: 1,
+    externalCurve: true,
+    outerKind: "outer9090",
+    footprint: {
+      x: round3(Math.min(...xs) - pad),
+      y: round3(Math.min(...ys) - pad),
+      w: round3(Math.max(...xs) - Math.min(...xs) + 2 * pad),
+      d: round3(Math.max(...ys) - Math.min(...ys) + 2 * pad),
+    },
+  };
+}
+
+/**
+ * 참조 도면형 180° 나선(반원): 건축선에 중심을 두고 바깥으로 반원 돌기.
+ * 두 평행 차로를 잇는다. (사진2)
+ */
+export function externalUTurn180Shape(ramp, plate, helpers) {
+  const { localFrame, rectPoly } = helpers;
+  const H = floorHeightOf(plate);
+  const W = Math.max(AISLE, ramp.width || AISLE, RAMP_CURVE_W);
+  const Ri = innerCurveRadius(plate);
+  const Rc = Ri + W / 2;
+  const Ro = Ri + W;
+  const vertical = ramp.edge === "n" || ramp.edge === "s";
+  const along = vertical ? plate.width : plate.depth;
+  const toLocal = localFrame(ramp.edge, plate);
+  const m = plate.siteMargin == null ? 20 : Number(plate.siteMargin);
+
+  const arc = Math.PI * Rc;
+  const lip = Math.max(2.4, W * 0.45);
+  const ease = Math.min(1, H / Math.max(1e-6, (arc + 2 * lip) * RAMP_SLOPE_CURVE));
+
+  let reason = "";
+  if (Ro > m + 0.05) reason = `180° 나선 램프가 대지 여유 ${m}m를 넘습니다(필요 약 ${round1(Ro)}m)`;
+
+  // 중심은 건축선(v=0). 입·출구는 t±Rc
+  const uc = clamp(ramp.t, Rc + 1, along - Rc - 1);
+  const mouthA = uc - Rc;
+  const mouthB = uc + Rc;
+
+  const pieces = [
+    toLocal.rect({ u0: mouthA - W / 2, u1: mouthA + W / 2, v0: 0, v1: lip }),
+    // 반원 외접 박스
+    toLocal.rect({ u0: uc - Ro, u1: uc + Ro, v0: -Ro, v1: 0 }),
+    toLocal.rect({ u0: mouthB - W / 2, u1: mouthB + W / 2, v0: 0, v1: lip }),
+  ];
+
+  // 폴리곤: 반원 고리 (바깥 호 + 안쪽 호 역순)
+  const ring = [];
+  const steps = 24;
+  for (let i = 0; i <= steps; i += 1) {
+    const a = Math.PI + (i / steps) * Math.PI; // π → 2π (바깥 반원, sin≤0)
+    ring.push(toLocal.pt(uc + Ro * Math.cos(a), Ro * Math.sin(a)));
+  }
+  for (let i = steps; i >= 0; i -= 1) {
+    const a = Math.PI + (i / steps) * Math.PI;
+    ring.push(toLocal.pt(uc + Ri * Math.cos(a), Ri * Math.sin(a)));
+  }
+
+  const at = (p, h) => ({ ...p, h: round3(h) });
+  const path = [];
+  let sAcc = 0;
+  let hAcc = 0;
+  const pushUV = (u, v, ds, slope) => {
+    sAcc += ds;
+    hAcc = Math.min(H, hAcc + ds * slope * ease);
+    path.push(at(toLocal.pt(u, v, sAcc), hAcc));
+  };
+
+  pushUV(mouthA, lip, 0, 0);
+  pushUV(mouthA, 0, lip, RAMP_SLOPE_STRAIGHT);
+  // 180°: θ=π → 2π (왼쪽 벽 → 바깥 → 오른쪽 벽)
+  for (let i = 1; i <= steps; i += 1) {
+    const a = Math.PI + (i / steps) * Math.PI;
+    pushUV(uc + Rc * Math.cos(a), Rc * Math.sin(a), arc / steps, RAMP_SLOPE_CURVE);
+  }
+  pushUV(mouthB, lip, lip, RAMP_SLOPE_STRAIGHT);
+  if (hAcc < H - 0.05) {
+    const last = path[path.length - 1];
+    path.push({ ...last, h: H });
+  }
+
+  const xs = path.map((p) => p.x);
+  const ys = path.map((p) => p.y);
+  const pad = W / 2;
+  return {
+    kind: "spiral",
+    ok: !reason && path.length > 6,
+    reason,
+    pieces,
+    polygons: [rectPoly(pieces[0]), ring, rectPoly(pieces[2])],
+    path,
+    segments: [
+      { name: "입구 직선", length: round1(lip), drop: round3(lip * RAMP_SLOPE_STRAIGHT * ease), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
+      { name: "180° 나선", length: round1(arc), drop: round3(arc * RAMP_SLOPE_CURVE * ease), slope: round3(RAMP_SLOPE_CURVE * ease) },
+      { name: "출구 직선", length: round1(lip), drop: round3(Math.max(0, H - hAcc + lip * RAMP_SLOPE_STRAIGHT * ease)), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
+    ],
+    total: round1(sAcc),
+    approach: pieces[2],
+    lip: pieces[0],
+    turn: 1,
     externalCurve: true,
     outerKind: "outer180",
     footprint: {

@@ -1,13 +1,13 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=285";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=286";
 import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=282";
-import { drawThumb, mountPlan } from "./plan.js?v=285";
+import { drawThumb, mountPlan } from "./plan.js?v=286";
 import { stallRuleTargets } from "./stallTypes.js?v=282";
 import {
   plateDimsFromPolygon, presetChamferRect, presetL, presetTrapezoid, presetU,
   rectPolygon, validatePolygon, normalizePolygon, offsetPolygon, polygonArea, edgeLengths,
 } from "./polygon.js?v=282";
 import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=282";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=285";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, pinLowerRampOverrides, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=286";
 
 // 시트·DXF·주변지도는 클릭 시에만 불러 초기 로딩을 줄인다.
 let sheetMod = null;
@@ -231,9 +231,18 @@ function renderRampPos() {
       ? `이 크기에서는 이 위치에 램프가 들어가지 않습니다(${why}). 자동이나 다른 위치를 고르세요.`
       : "";
 }
+/** 출입/층간 형태만 바꿀 때 — 셸 재생성 없이 화면만 갱신(층간 위치 유지). */
+function refreshRampFormsOnly() {
+  syncPlateMeta();
+  if (state.stalls?.length || state.variants?.length) {
+    optimizeLayout({ refresh: false });
+  }
+  emit();
+}
 $("ramp-form").addEventListener("change", () => {
+  // 출입 형태를 바꿔도 층간 위치가 따라가지 않도록 먼저 고정
+  pinLowerRampOverrides();
   state.rampForm = $("ramp-form").value;
-  // 90·직선·90 / 180° / 구 외곽회전은 외부형(주차선 밖 진입)
   const outerForms = ["outer9090", "outer180", "spiral"];
   if (outerForms.includes(state.rampForm) && state.rampPlacement !== "external") {
     const margin = Math.max(
@@ -261,13 +270,12 @@ $("ramp-form").addEventListener("change", () => {
     delete next.legacy;
     return next;
   });
-  syncPlateMeta();
-  if (state.plate) refreshPlateAfterOption();
-  else emit();
+  refreshRampFormsOnly();
 });
 $("lower-ramp-form").addEventListener("change", () => {
+  // 층간 형태만 변경 — 출입·층간 위치 유지
+  pinLowerRampOverrides();
   state.lowerRampForm = $("lower-ramp-form").value;
-  // 층간만 외부 진입 형태면 덮어쓰기에 placement 반영
   const outerForms = ["outer9090", "outer180", "spiral"];
   if (outerForms.includes(state.lowerRampForm)) {
     Object.keys(state.lowerRampOverrides || {}).forEach((id) => {
@@ -276,25 +284,31 @@ $("lower-ramp-form").addEventListener("change", () => {
         placement: "external",
       };
     });
+    // 덮어쓰기가 아직 없으면 지금 고정본에 external 반영
+    pinLowerRampOverrides();
+    Object.keys(state.lowerRampOverrides || {}).forEach((id) => {
+      if (!state.lowerRampOverrides[id].placement) {
+        state.lowerRampOverrides[id].placement = "external";
+      }
+    });
   }
-  syncPlateMeta();
-  if (state.plate) refreshPlateAfterOption();
-  else emit();
+  refreshRampFormsOnly();
 });
 $("lower-ramp-mode").addEventListener("change", () => {
+  // 층간 위치 모드를 바꾸면 덮어쓰기 초기화 후 새 파생 위치 적용
   state.lowerRampMode = $("lower-ramp-mode").value;
-  syncPlateMeta();
-  if (state.plate) refreshPlateAfterOption();
-  else emit();
+  state.lowerRampOverrides = {};
+  refreshRampFormsOnly();
 });
 $("ramp-placement").addEventListener("change", () => {
+  pinLowerRampOverrides();
   state.rampPlacement = $("ramp-placement").value;
-  if (state.plate) {
-    state.plate = { ...state.plate, rampPlacement: state.rampPlacement };
-    refreshPlateAfterOption();
-  } else {
-    render();
-  }
+  state.ramps = (state.ramps || []).map((r) => ({
+    ...r,
+    placement: state.rampPlacement,
+  }));
+  if (state.plate) state.plate = { ...state.plate, rampPlacement: state.rampPlacement };
+  refreshRampFormsOnly();
 });
 $("entrance-mode").addEventListener("change", () => {
   state.entranceMode = $("entrance-mode").value;
@@ -860,7 +874,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=285")
+    sceneMount = import("./scene.js?v=286")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -1166,17 +1180,17 @@ function render() {
     const kind = state.metrics.rampKind;
     const formName = (f) => (
       f === "outer9090" || f === "spiral" ? "90·직선·90"
-        : f === "outer180" ? "180° 회전"
-          : f === "curve90" ? "90° 곡선"
+        : f === "outer180" ? "180° 나선"
+          : f === "curve90" ? "직선+90°"
             : f === "straight" ? "직선"
               : f === "same" ? "출입과 같음"
                 : "자동"
     );
     const formLabel = ["outer9090", "spiral"].includes(state.rampForm) || ["outer9090", "spiral"].includes(kind)
       ? "90·직선·90"
-      : state.rampForm === "outer180" || kind === "outer180" ? "180° 회전"
-      : kind === "curved" ? "직선+곡선 90°"
-        : "직선";
+      : state.rampForm === "outer180" || kind === "outer180" ? "180° 나선"
+        : state.rampForm === "curve90" || kind === "curved" ? "직선+90°"
+          : "직선";
     rows.push(["지상→B1 램프", `${state.rampPlacement === "external" ? "외부" : "내부"} · ${formLabel} ${state.metrics.rampTotal || (ramp && ramp.length) || "—"}m`]);
     const lowerMode = state.lowerRampMode || "alternate";
     const lowerForm = state.lowerRampForm || "auto";
