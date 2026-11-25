@@ -8,7 +8,7 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=287";
+} from "./rampForms.js?v=288";
 import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=284";
 import {
   analyzeOnPlate,
@@ -33,7 +33,7 @@ export {
   spiralRampShape,
   externalBend9090Shape,
   externalUTurn180Shape,
-} from "./rampForms.js?v=287";
+} from "./rampForms.js?v=288";
 export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=284";
 
 /** 모듈 사슬 램프의 평면 분석(legacy 동등이면 null). */
@@ -2060,6 +2060,19 @@ function layoutCore(input) {
   blockRects.forEach((b) => {
     aisles = ensureBlockAccess(aisles, b, plate, blockers);
   });
+  // 코어(엘리베이터·계단) 앞에 6m 차로 — 참조 도면처럼 코어를 섬으로 두고 진입면 확보
+  const coreFrontZones = [];
+  cores.forEach((core) => {
+    const before = aisles.length;
+    aisles = ensureCoreFrontAisle(aisles, core, plate, blockers);
+    if (aisles.length > before) {
+      const added = aisles[aisles.length - 1];
+      if (added && added.role === "core-front") coreFrontZones.push({ ...added, role: "core-front" });
+    }
+  });
+  coreFrontZones.forEach((z) => {
+    keepClear.push({ ...z, role: "core-front" });
+  });
   // 원형·U자 입구도 차로와 닿게 접근 띠를 붙인다.
   if (shape.kind === "spiral" || shape.outerKind === "outer9090" || shape.outerKind === "outer180") {
     rampPieces.forEach((b) => {
@@ -2126,9 +2139,13 @@ function layoutCore(input) {
   if (plate.trimDeadEnds) {
     for (let pass = 0; pass < 6; pass += 1) {
       const adjNow = buildGraph(aisles);
-      const removable = aisles.filter((aisle, index) => !(aisle.portals || []).length
-        && adjNow[index].length <= 1
-        && !stalls.some((stall) => servedBy(stall, aisle)));
+      const removable = aisles.filter((aisle, index) => {
+        // 램프 접근·코어 앞 차로는 엘리베이터·계단 진입용 — 막다른길로 지우지 않음
+        if (aisle.role === "approach" || aisle.role === "core-front" || aisle.role === "core-side") return false;
+        return !(aisle.portals || []).length
+          && adjNow[index].length <= 1
+          && !stalls.some((stall) => servedBy(stall, aisle));
+      });
       if (!removable.length) break;
       aisles = aisles.filter((aisle) => !removable.includes(aisle));
       trimmedAisles += removable.length;
@@ -2160,14 +2177,20 @@ function layoutCore(input) {
     // 막다른 차로(연결 1곳 이하) 수: 시험 삭제로 새 막다른 차로가 생기면 안 된다(순환이 끊기므로).
     const deadEnds = (list) => {
       const g = buildGraph(list);
-      return list.filter((a, i) => a.role !== "approach" && g[i].length <= 1).length;
+      return list.filter((a, i) => (
+        a.role !== "approach" && a.role !== "core-front" && a.role !== "core-side"
+        && g[i].length <= 1
+      )).length;
     };
     for (let pass = 0; pass < 3; pass += 1) {
       let improved = false;
       const base = parts(aisles);
       const baseIssues = portalCount();
       const baseDead = deadEnds(aisles);
-      const candidates = aisles.filter((a) => a.role !== "approach" && Math.max(a.w, a.d) <= 16);
+      const candidates = aisles.filter((a) => (
+        a.role !== "approach" && a.role !== "core-front" && a.role !== "core-side"
+        && Math.max(a.w, a.d) <= 16
+      ));
       for (const cand of candidates) {
         const saved = aisles;
         aisles = aisles.filter((a) => a !== cand);
@@ -2244,6 +2267,15 @@ function layoutCore(input) {
         best = pick.count;
         coreAisleAdded = true;
       }
+      // 후보 다리가 없어도 코어 진입면 6m는 반드시 확보(참조 도면)
+      cores.forEach((core) => {
+        const before = aisles.length;
+        aisles = ensureCoreFrontAisle(aisles, core, plate, solids);
+        if (aisles.length > before) {
+          coreAisleAdded = true;
+          keepClear.push({ ...aisles[aisles.length - 1], role: "core-front" });
+        }
+      });
       stampPortals(aisles, openings, ramp, plate);
       fillStalls();
     }
@@ -2269,15 +2301,19 @@ function layoutCore(input) {
     const groups = componentGroups(aisles);
     if (groups.length > 1) {
       const portalsOf = (group) => group.reduce((sum, i) => sum + (aisles[i].portals || []).length, 0);
-      // 램프 접근 차로가 있는 덩어리를 우선(입·출구 동선 유지)
-      const approachBonus = (group) => group.reduce((sum, i) => sum + (aisles[i].role === "approach" ? 3 : 0), 0);
+      // 램프 접근·코어 앞 차로가 있는 덩어리를 우선
+      const approachBonus = (group) => group.reduce((sum, i) => {
+        const r = aisles[i].role;
+        return sum + (r === "approach" || r === "core-front" ? 3 : 0);
+      }, 0);
       groups.sort((a, b) => (portalsOf(b) + approachBonus(b)) - (portalsOf(a) + approachBonus(a)) || b.length - a.length);
       const keep = new Set(groups[0]);
-      // 다른 덩어리의 approach는 버리지 않고 주 동선에 다시 붙임
+      // 다른 덩어리의 approach·core-front는 버리지 않고 주 동선에 다시 붙임
       const orphanApproaches = [];
       groups.slice(1).forEach((group) => {
         group.forEach((i) => {
-          if (aisles[i].role === "approach") orphanApproaches.push({ ...aisles[i] });
+          const r = aisles[i].role;
+          if (r === "approach" || r === "core-front") orphanApproaches.push({ ...aisles[i] });
         });
       });
       const before = aisles.length;
@@ -3907,8 +3943,132 @@ function ensureBlockAccess(aisles, block, plate, blockers) {
 }
 
 /**
+ * 코어(엘리베이터·계단) 진입면 앞에 6m 차로를 확보한다.
+ * 참조 도면: 코어를 섬처럼 두고 긴 면에 차로가 붙어 승강장·계단으로 들어간다.
+ * 이미 6m급 차로가 한 면에 충분히 닿으면 그대로 둔다.
+ */
+function ensureCoreFrontAisle(aisles, core, plate, blockers) {
+  if (!core) return aisles;
+  // 이미 폭 6m에 가깝고 코어 면에 4m 이상 닿는 차로가 있으면 OK
+  const hasFront = (aisles || []).some((a) => {
+    const len = contactLength(core, a);
+    if (len < 4 - 0.05) return false;
+    return aisleTravelWidth(a) >= AISLE - 0.15;
+  });
+  if (hasFront) return aisles;
+
+  // 긴 면 우선(엘리베이터 로비 쪽): 가로로 긴 코어 → 남/북, 세로로 긴 코어 → 동/서
+  const longHorizontal = core.w >= core.d - 0.05;
+  const ordered = longHorizontal
+    ? [
+      { x: core.x, y: core.y + core.d, w: core.w, d: AISLE, dir: "n" },
+      { x: core.x, y: core.y - AISLE, w: core.w, d: AISLE, dir: "s" },
+      { x: core.x + core.w, y: core.y, w: AISLE, d: core.d, dir: "e" },
+      { x: core.x - AISLE, y: core.y, w: AISLE, d: core.d, dir: "w" },
+    ]
+    : [
+      { x: core.x + core.w, y: core.y, w: AISLE, d: core.d, dir: "e" },
+      { x: core.x - AISLE, y: core.y, w: AISLE, d: core.d, dir: "w" },
+      { x: core.x, y: core.y + core.d, w: core.w, d: AISLE, dir: "n" },
+      { x: core.x, y: core.y - AISLE, w: core.w, d: AISLE, dir: "s" },
+    ];
+
+  let best = null;
+  for (const raw of ordered) {
+    let c = {
+      x: Math.max(0, raw.x),
+      y: Math.max(0, raw.y),
+      w: Math.min(plate.width, raw.x + raw.w) - Math.max(0, raw.x),
+      d: Math.min(plate.depth, raw.y + raw.d) - Math.max(0, raw.y),
+      dir: raw.dir,
+    };
+    if (c.w < 1 || c.d < 1) continue;
+
+    // 가까운 평행 차로까지 띠를 늘려 주 동선에 붙임
+    c = extendCoreFrontToNetwork(c, aisles, plate, raw.dir);
+
+    let parts = [c];
+    for (const blk of blockers || []) {
+      if (blk === core) continue;
+      parts = parts.flatMap((p) => (overlapArea(p, blk) > 0.05 ? subtractRect(p, blk) : [p]));
+    }
+    parts = parts.filter((p) => (
+      p.w >= 1 && p.d >= 1
+      && rectGap(p, core) < 0.35
+      && contactLength(core, p) >= Math.min(3.5, Math.min(core.w, core.d) * 0.35)
+      && aisleTravelWidth(p) >= AISLE_MIN - 0.05
+    ));
+    for (const part of parts) {
+      const connects = (aisles || []).some((a) => rectGap(part, a) < 0.35);
+      const faceLen = contactLength(core, part);
+      const score = (connects ? 0 : 500) - faceLen * 20 - part.w * part.d;
+      if (!best || score < best.score) best = { c: part, score, connects };
+    }
+  }
+  if (!best) {
+    const next = ensureBlockAccess(aisles, core, plate, blockers);
+    if (next === aisles) {
+      // 최후: 클립만 한 6m 띠라도 붙임(이후 ensureBlockAccess·repair가 이음)
+      const fallback = ordered[0];
+      const c = {
+        x: Math.max(0, fallback.x),
+        y: Math.max(0, fallback.y),
+        w: Math.min(plate.width, fallback.x + fallback.w) - Math.max(0, fallback.x),
+        d: Math.min(plate.depth, fallback.y + fallback.d) - Math.max(0, fallback.y),
+      };
+      if (c.w >= 1 && c.d >= 1) {
+        return aisles.concat([{ ...c, role: "core-front", phase: "core-access", portals: [] }]);
+      }
+    }
+    return next === aisles ? aisles : next.map((a, i, arr) => (
+      i === arr.length - 1 && a.role === "bypass"
+        ? { ...a, role: "core-front", phase: "core-access" }
+        : a
+    ));
+  }
+  return aisles.concat([{
+    ...best.c,
+    role: "core-front",
+    phase: "core-access",
+    portals: [],
+  }]);
+}
+
+/** 코어 앞 띠를 가장 가까운 평행 차로까지 늘려 연결한다. */
+function extendCoreFrontToNetwork(strip, aisles, plate, dir) {
+  const list = aisles || [];
+  if (dir === "n" || dir === "s") {
+    // 가로 띠: 좌우로 늘림
+    let x0 = strip.x;
+    let x1 = strip.x + strip.w;
+    const yMid = strip.y + strip.d / 2;
+    list.forEach((a) => {
+      if (yMid < a.y - 0.3 || yMid > a.y + a.d + 0.3) return;
+      if (a.x + a.w <= x0 && x0 - (a.x + a.w) <= 18) x0 = Math.min(x0, a.x + a.w);
+      if (a.x >= x1 && a.x - x1 <= 18) x1 = Math.max(x1, a.x);
+    });
+    x0 = Math.max(0, x0);
+    x1 = Math.min(plate.width, x1);
+    return { ...strip, x: x0, w: Math.max(strip.w, x1 - x0) };
+  }
+  // 세로 띠: 상하로 늘림
+  let y0 = strip.y;
+  let y1 = strip.y + strip.d;
+  const xMid = strip.x + strip.w / 2;
+  list.forEach((a) => {
+    if (xMid < a.x - 0.3 || xMid > a.x + a.w + 0.3) return;
+    if (a.y + a.d <= y0 && y0 - (a.y + a.d) <= 18) y0 = Math.min(y0, a.y + a.d);
+    if (a.y >= y1 && a.y - y1 <= 18) y1 = Math.max(y1, a.y);
+  });
+  y0 = Math.max(0, y0);
+  y1 = Math.min(plate.depth, y1);
+  return { ...strip, y: y0, d: Math.max(strip.d, y1 - y0) };
+}
+
+/**
  * 동 코어가 막은 동 외곽 안에 있으면 그 사각형이 차로에 닿는지로 판정.
  * 계단 코어·튀어나온 코어는 코어 자체가 차로에 닿아야 한다.
+ * 엘리베이터·계단 진입을 위해 폭 6m급 차로가 면에 닿는 것을 우선한다.
  */
 function coreAccessIssues(cores, aisles, blockRects, plate) {
   const issues = [];
@@ -3919,20 +4079,24 @@ function coreAccessIssues(cores, aisles, blockRects, plate) {
       ? (blockRects || []).find((b) => b.buildingId === core.buildingId)
       : null;
     const target = block || core;
-    // 동 외곽(또는 코어) 면에 차로가 3m 이상 닿아야 접근으로 본다.
-    const touches = (aisles || []).some((a) => contactLength(target, a) >= 3 - 0.05);
+    // 면에 폭 있는 차로가 4m 이상 닿아야 승강장·계단 진입으로 본다.
+    const touches = (aisles || []).some((a) => {
+      const len = contactLength(target, a);
+      if (len < 4 - 0.05) return false;
+      return aisleTravelWidth(a) >= AISLE_MIN - 0.05;
+    });
     if (touches) return;
     if (kind === "stair") {
       stairNo += 1;
-      issues.push({ type: "network", label: `계단 ${stairNo}이 차로와 닿지 않습니다.` });
+      issues.push({ type: "network", label: `계단 ${stairNo} 앞에 차로가 없어 진입할 수 없습니다.` });
     } else if (plate && plate.buildings) {
       const b = plate.buildings.find((x) => x.id === core.buildingId);
       const name = (b && b.name) || `코어 ${index + 1}`;
-      issues.push({ type: "network", label: `${name} 코어에 닿는 차로가 없습니다.` });
+      issues.push({ type: "network", label: `${name} 엘리베이터·계단 앞에 차로가 없습니다.` });
     } else if (cores.length > 1) {
-      issues.push({ type: "network", label: `코어 ${index + 1}이 차로와 닿지 않습니다.` });
+      issues.push({ type: "network", label: `코어 ${index + 1} 엘리베이터·계단 앞에 차로가 없습니다.` });
     } else {
-      issues.push({ type: "network", label: "코어가 차로와 닿지 않습니다." });
+      issues.push({ type: "network", label: "코어(엘리베이터·계단) 앞에 차로가 없습니다." });
     }
   });
   return issues;

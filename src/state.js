@@ -20,7 +20,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=287";
+} from "./layout.js?v=288";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
