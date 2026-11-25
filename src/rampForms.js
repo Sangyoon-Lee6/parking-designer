@@ -175,6 +175,7 @@ export function occupancyRamps(ramps, plate, lowerMode = "alternate") {
 /**
  * 외곽 회전 램프(한 층분): 주차장 외벽에 붙어 변을 따라가다 모서리에서 내변≥6m로 꺾으며 내려간다.
  * (가운데 원형 우물이 아님 — 차가 가장자리를 돌며 층고를 내려감)
+ * placement=external 이면 건축선 밖(이격 안) 바깥 띠를 돈다.
  */
 export function spiralRampShape(ramp, plate) {
   const H = floorHeightOf(plate);
@@ -184,10 +185,23 @@ export function spiralRampShape(ramp, plate) {
   const Rc = Ri + W / 2;
   const Ww = plate.width;
   const Dd = plate.depth;
+  const external = (ramp.placement || plate.rampPlacement || "internal") === "external";
+  // 중심선: 내부형은 외벽에서 W/2 안쪽, 외부형은 건축선 밖 W/2 (이격 띠).
+  const wallInset = external ? -W / 2 : W / 2;
 
   let reason = "";
   if (Ww < 2 * (W + Ri) + AISLE || Dd < 2 * (W + Ri) + AISLE) {
     reason = "평면이 작아 외곽 회전 램프(내변 6m·폭 6.5m)를 둘 수 없습니다";
+  }
+  if (external) {
+    const m = plate.siteMargins || {};
+    const base = plate.siteMargin == null ? 20 : Number(plate.siteMargin);
+    const have = (k) => (Number.isFinite(Number(m[k])) ? Number(m[k]) : base);
+    const need = W + 0.2;
+    const edge = ramp.edge || "w";
+    if (have(edge) < need - 0.05) {
+      reason = reason || `외부 외곽 회전에 ${edgeLabelKo(edge)}측 이격 ${need}m 이상이 필요합니다`;
+    }
   }
 
   // 진행 방향: 진입 변에서 더 긴 쪽 직선이 나오도록 시계/반시계를 고른다.
@@ -202,8 +216,8 @@ export function spiralRampShape(ramp, plate) {
   const needCurve = minCurvePathLength(H, tr);
   const targetLen = Math.max(needStraight, needCurve);
   const minFirst = Math.max(8, Math.min(14, needStraight * 0.45));
-  const lenCw = edgeRun(startEdge, startEdge, t0, true, W, Ri, Ww, Dd, true).len;
-  const lenCcw = edgeRun(startEdge, startEdge, t0, true, W, Ri, Ww, Dd, false).len;
+  const lenCw = edgeRun(startEdge, startEdge, t0, true, W, Ri, Ww, Dd, true, wallInset).len;
+  const lenCcw = edgeRun(startEdge, startEdge, t0, true, W, Ri, Ww, Dd, false, wallInset).len;
   let useCw = lenCw >= lenCcw;
   if (Math.max(lenCw, lenCcw) < minFirst - 0.05) {
     reason = reason || "진입 위치가 모서리에 너무 가까워 외곽 회전 램프를 둘 수 없습니다";
@@ -229,14 +243,14 @@ export function spiralRampShape(ramp, plate) {
     if (hAcc >= H - 1e-6) done = true;
   };
 
-  // 첫 점: 진입 변 위, 외벽에서 W/2 안쪽.
-  const start = edgePoint(startEdge, t0, W / 2, Ww, Dd);
+  // 첫 점: 진입 변 위 중심선(내부=안쪽, 외부=건축선 밖).
+  const start = edgePoint(startEdge, t0, wallInset, Ww, Dd);
   path.push({ x: round3(start.x), y: round3(start.y), s: 0, h: 0 });
 
   for (let ei = 0; ei < order.length * 2 && !done && !reason; ei += 1) {
     const edge = order[ei % 4];
     const next = order[(ei + 1) % 4];
-    const run = edgeRun(edge, startEdge, t0, ei === 0, W, Ri, Ww, Dd, useCw);
+    const run = edgeRun(edge, startEdge, t0, ei === 0, W, Ri, Ww, Dd, useCw, wallInset);
     // 직선: 외벽 띠 중심선
     const nSteps = Math.max(2, Math.ceil(run.len / 2));
     let segDrop = 0;
@@ -262,12 +276,12 @@ export function spiralRampShape(ramp, plate) {
       });
       // 실제 달린 구간만 장애물·윤곽으로 (변 전체를 막지 않음)
       pieces.push(pathSpanBox(path, path.length - nSteps - 1, path.length - 1, W));
-      polygons.push(edgeBandPoly(edge, run, W, Ww, Dd));
+      polygons.push(edgeBandPoly(edge, run, W, Ww, Dd, external));
     }
     if (done) break;
 
-    // 모서리 90° (내변 Ri)
-    const corner = cornerTurn(edge, next, W, Ri, Rc, Ww, Dd, useCw);
+    // 모서리 90° (내변 Ri) — 외부형은 건축선 밖 모서리
+    const corner = cornerTurn(edge, next, W, Ri, Rc, Ww, Dd, useCw, external);
     const arcSteps = 12;
     const arcStartIdx = path.length - 1;
     let arcLen = 0;
@@ -321,7 +335,7 @@ export function spiralRampShape(ramp, plate) {
     d: round3(Math.max(...ys) - Math.min(...ys) + 2 * pad),
   };
 
-  // 도착 쪽: 마지막 변 안쪽으로 차로와 닿는 띠
+  // 도착 쪽: 마지막 변에서 평면 안쪽 차로와 닿는 띠
   const lastEdge = order[Math.min(order.length - 1, Math.floor((path.length) / 8)) % 4];
   const lip = edgeInnerLip(lastEdge, W, Ww, Dd);
 
@@ -341,6 +355,7 @@ export function spiralRampShape(ramp, plate) {
     turns: round3(sAcc / (2 * Math.PI * Rc)),
     footprint,
     perimeter: true,
+    external,
   };
 }
 
@@ -357,7 +372,7 @@ function rectPolyLocal(r) {
   ];
 }
 
-/** 외벽에서 inset 안쪽 중심선 좌표. */
+/** 외벽 기준 중심선. inset>0 안쪽, inset<0 건축선 밖(이격). */
 function edgePoint(edge, t, inset, Ww, Dd) {
   if (edge === "w") return { x: inset, y: t };
   if (edge === "e") return { x: Ww - inset, y: t };
@@ -365,9 +380,9 @@ function edgePoint(edge, t, inset, Ww, Dd) {
   return { x: t, y: Dd - inset };
 }
 
-/** 한 변을 따라 달리는 직선 구간 (모서리 곡선 직전까지만). */
-function edgeRun(edge, startEdge, t0, isFirst, W, Ri, Ww, Dd, useCw) {
-  const inset = W / 2;
+/** 한 변을 따라 달리는 직선 구간 (모서리 곡선 직전까지만). wallInset: 중심선 오프셋. */
+function edgeRun(edge, startEdge, t0, isFirst, W, Ri, Ww, Dd, useCw, wallInset = W / 2) {
+  const inset = wallInset;
   const cornerClear = W + Ri; // 모서리 곡선 시작 전
   let from;
   let to;
@@ -444,27 +459,31 @@ function pathSpanBox(path, i0, i1, W) {
   };
 }
 
-/** 달린 직선 구간의 램프 띠 폴리곤 (외벽~안쪽 W). */
-function edgeBandPoly(edge, run, W, Ww, Dd) {
+/** 달린 직선 구간의 램프 띠 폴리곤. external이면 건축선 밖 띠. */
+function edgeBandPoly(edge, run, W, Ww, Dd, external = false) {
   const a = run.at(0);
   const b = run.at(1);
   if (edge === "w") {
     const y0 = Math.min(a.y, b.y);
     const y1 = Math.max(a.y, b.y);
+    if (external) return [{ x: -W, y: y0 }, { x: 0, y: y0 }, { x: 0, y: y1 }, { x: -W, y: y1 }];
     return [{ x: 0, y: y0 }, { x: W, y: y0 }, { x: W, y: y1 }, { x: 0, y: y1 }];
   }
   if (edge === "e") {
     const y0 = Math.min(a.y, b.y);
     const y1 = Math.max(a.y, b.y);
+    if (external) return [{ x: Ww, y: y0 }, { x: Ww + W, y: y0 }, { x: Ww + W, y: y1 }, { x: Ww, y: y1 }];
     return [{ x: Ww - W, y: y0 }, { x: Ww, y: y0 }, { x: Ww, y: y1 }, { x: Ww - W, y: y1 }];
   }
   if (edge === "s") {
     const x0 = Math.min(a.x, b.x);
     const x1 = Math.max(a.x, b.x);
+    if (external) return [{ x: x0, y: -W }, { x: x1, y: -W }, { x: x1, y: 0 }, { x: x0, y: 0 }];
     return [{ x: x0, y: 0 }, { x: x1, y: 0 }, { x: x1, y: W }, { x: x0, y: W }];
   }
   const x0 = Math.min(a.x, b.x);
   const x1 = Math.max(a.x, b.x);
+  if (external) return [{ x: x0, y: Dd }, { x: x1, y: Dd }, { x: x1, y: Dd + W }, { x: x0, y: Dd + W }];
   return [{ x: x0, y: Dd - W }, { x: x1, y: Dd - W }, { x: x1, y: Dd }, { x: x0, y: Dd }];
 }
 
@@ -475,23 +494,34 @@ function edgeInnerLip(edge, W, Ww, Dd) {
   return { x: Ww * 0.25, y: Dd - W - 1.0, w: Ww * 0.5, d: 1.2 };
 }
 
-/** fromEdge → nextEdge 모서리 90° 곡선. */
-function cornerTurn(fromEdge, nextEdge, W, Ri, Rc, Ww, Dd, useCw) {
+/** fromEdge → nextEdge 모서리 90° 곡선. external이면 건축선 밖 모서리. */
+function cornerTurn(fromEdge, nextEdge, W, Ri, Rc, Ww, Dd, useCw, external = false) {
   const key = `${fromEdge}${nextEdge}`;
-  // 외벽 모서리에 외변을 붙이려면 중심은 (Ri+W, Ri+W).
-  // (예전 Rc 중심은 외변이 평면 밖으로 W/2 나가 팬/끼임 메시가 됐다.)
+  // 내부: 외벽 모서리에 외변을 붙이려면 중심은 (Ri+W, Ri+W).
+  // 외부: 건축선 밖 모서리 — 중심을 평면 밖으로 둔다.
   const Ro = Ri + W;
-  const centers = {
-    ws: { cx: Ro, cy: Ro, a0: Math.PI, a1: Math.PI * 1.5 },       // 서→남 (cw)
-    se: { cx: Ww - Ro, cy: Ro, a0: Math.PI * 1.5, a1: Math.PI * 2 }, // 남→동
-    en: { cx: Ww - Ro, cy: Dd - Ro, a0: 0, a1: Math.PI * 0.5 },     // 동→북
-    nw: { cx: Ro, cy: Dd - Ro, a0: Math.PI * 0.5, a1: Math.PI },    // 북→서
-    wn: { cx: Ro, cy: Dd - Ro, a0: Math.PI, a1: Math.PI * 0.5 },    // 서→북 (ccw)
-    ne: { cx: Ww - Ro, cy: Dd - Ro, a0: Math.PI * 0.5, a1: 0 },     // 북→동
-    es: { cx: Ww - Ro, cy: Ro, a0: 0, a1: -Math.PI * 0.5 },         // 동→남
-    sw: { cx: Ro, cy: Ro, a0: -Math.PI * 0.5, a1: -Math.PI },      // 남→서
+  const centersIn = {
+    ws: { cx: Ro, cy: Ro, a0: Math.PI, a1: Math.PI * 1.5 },
+    se: { cx: Ww - Ro, cy: Ro, a0: Math.PI * 1.5, a1: Math.PI * 2 },
+    en: { cx: Ww - Ro, cy: Dd - Ro, a0: 0, a1: Math.PI * 0.5 },
+    nw: { cx: Ro, cy: Dd - Ro, a0: Math.PI * 0.5, a1: Math.PI },
+    wn: { cx: Ro, cy: Dd - Ro, a0: Math.PI, a1: Math.PI * 0.5 },
+    ne: { cx: Ww - Ro, cy: Dd - Ro, a0: Math.PI * 0.5, a1: 0 },
+    es: { cx: Ww - Ro, cy: Ro, a0: 0, a1: -Math.PI * 0.5 },
+    sw: { cx: Ro, cy: Ro, a0: -Math.PI * 0.5, a1: -Math.PI },
   };
-  const c = centers[key] || centers.ws;
+  // 외부: 내변이 건축선에 닿고 외변이 이격 쪽으로 나가도록 중심을 바깥에 둔다.
+  const centersOut = {
+    ws: { cx: -Ri, cy: -Ri, a0: Math.PI, a1: Math.PI * 1.5 },
+    se: { cx: Ww + Ri, cy: -Ri, a0: Math.PI * 1.5, a1: Math.PI * 2 },
+    en: { cx: Ww + Ri, cy: Dd + Ri, a0: 0, a1: Math.PI * 0.5 },
+    nw: { cx: -Ri, cy: Dd + Ri, a0: Math.PI * 0.5, a1: Math.PI },
+    wn: { cx: -Ri, cy: Dd + Ri, a0: Math.PI, a1: Math.PI * 0.5 },
+    ne: { cx: Ww + Ri, cy: Dd + Ri, a0: Math.PI * 0.5, a1: 0 },
+    es: { cx: Ww + Ri, cy: -Ri, a0: 0, a1: -Math.PI * 0.5 },
+    sw: { cx: -Ri, cy: -Ri, a0: -Math.PI * 0.5, a1: -Math.PI },
+  };
+  const c = (external ? centersOut : centersIn)[key] || (external ? centersOut.ws : centersIn.ws);
   const steps = 8;
   const outer = [];
   const inner = [];
@@ -510,6 +540,7 @@ function cornerTurn(fromEdge, nextEdge, W, Ri, Rc, Ww, Dd, useCw) {
     d: round3(Math.max(...ys) - Math.min(...ys)),
   };
   void useCw;
+  void Rc;
   return { ...c, poly, pieces: [piece] };
 }
 

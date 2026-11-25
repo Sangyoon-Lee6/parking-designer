@@ -6,8 +6,8 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=282";
-import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=282";
+} from "./rampForms.js?v=284";
+import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=284";
 import {
   analyzeOnPlate,
   slopePlan,
@@ -29,8 +29,8 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=282";
-export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=282";
+} from "./rampForms.js?v=284";
+export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=284";
 
 /** 모듈 사슬 램프의 평면 분석(legacy 동등이면 null). */
 function moduleSiteOf(ramp, plate, blocks = []) {
@@ -450,15 +450,20 @@ function rampShapeRaw(ramp, plate) {
   const form = rampFormOf(ramp, plate && plate.rampForm);
   if (form === "spiral") {
     const spiral = spiralRampShape(ramp, plate);
-    // 중심선이 평면 밖으로 나가거나 조각이 크게 벗어나면 실패로 본다(AABB 패딩은 무시).
+    // 외부·이격 안 외곽 회전은 대지 여유까지 허용. 내부형은 평면 안만.
+    const m = siteMarginsOf(plate);
+    const allowOut = spiral.external || (ramp.placement || "internal") === "external";
+    const minX = allowOut ? -m.w - 0.05 : -0.05;
+    const minY = allowOut ? -m.s - 0.05 : -0.05;
+    const maxX = allowOut ? plate.width + m.e + 0.05 : plate.width + 0.05;
+    const maxY = allowOut ? plate.depth + m.n + 0.05 : plate.depth + 0.05;
     const pathOut = (spiral.path || []).some((pt) => (
-      pt.x < -0.05 || pt.y < -0.05
-      || pt.x > plate.width + 0.05 || pt.y > plate.depth + 0.05
+      pt.x < minX || pt.y < minY || pt.x > maxX || pt.y > maxY
     ));
     const piecesOut = (spiral.pieces || []).some((box) => (
-      box.x < -0.6 || box.y < -0.6
-      || box.x + box.w > plate.width + 0.6
-      || box.y + box.d > plate.depth + 0.6
+      box.x < minX - 0.55 || box.y < minY - 0.55
+      || box.x + box.w > maxX + 0.55
+      || box.y + box.d > maxY + 0.55
     ));
     const outside = pathOut || piecesOut;
     if (spiral.ok && !outside) return spiral;
@@ -1041,8 +1046,16 @@ export function pickEdge(point, plate) {
   ];
   options.sort((a, b) => a.dist - b.dist);
   const nearest = options[0];
+  // 이격 띠(건축선 밖)에서도 변을 고를 수 있게 — 외곽 회전·외부 램프 드래그용
+  const m = siteMarginsOf(plate);
+  const marginHit = (
+    (nearest.edge === "w" && point.x >= -m.w - 0.5 && point.x <= 1.5)
+    || (nearest.edge === "e" && point.x >= plate.width - 1.5 && point.x <= plate.width + m.e + 0.5)
+    || (nearest.edge === "s" && point.y >= -m.s - 0.5 && point.y <= 1.5)
+    || (nearest.edge === "n" && point.y >= plate.depth - 1.5 && point.y <= plate.depth + m.n + 0.5)
+  );
   const limit = Math.max(2.5, Math.min(plate.width, plate.depth) * 0.18);
-  if (nearest.dist > limit) return null;
+  if (nearest.dist > limit && !marginHit) return null;
   return nearest;
 }
 
@@ -1155,19 +1168,14 @@ export function rampPositionCheck(plate, placement, floorHeight) {
   return out;
 }
 
-/** 동이 1개 이상이고 (외부 램프 또는 모듈 사슬 램프)면 단지형 차로 먼저 엔진을 쓴다. */
+/** 동이 1개 이상이면 단지형 차로 먼저 엔진을 쓴다(코어가 가장자리인 최적 구획 모듈 포함). */
 export function complexMode(input) {
   const plate = input?.plate || {};
   const blocks = plate.blockRects || [];
   const buildings = plate.buildings || [];
   const towers = input.towers || [];
-  const ramp = (input.ramps || [])[0];
-  const placement = ramp?.placement || input.rampPlacement || "internal";
   const hasTowers = blocks.length > 0 || buildings.length > 0 || towers.length > 0;
-  if (!hasTowers) return false;
-  if (placement === "external") return true;
-  // 모듈 사슬(예전과 다른 내부·걸침)도 차로 먼저 엔진으로 돌린다.
-  return Boolean(moduleSiteOf(ramp, plate, towers.length ? towers : blocks));
+  return hasTowers;
 }
 
 function complexInputOf(input) {
@@ -1183,6 +1191,7 @@ function complexInputOf(input) {
   const keepClear = site ? (site.keepClear || []).slice() : (plate.keepClear || []).slice();
   let ramps = input.ramps || [];
   let openings = input.openings || [];
+  const placement0 = ramp0?.placement || input.rampPlacement || "internal";
   // 내부·걸침 모듈은 외벽 연결점(또는 도로변)으로 진입 스텁을 만들어 loopFirst가 진입로를 잡게 한다.
   if (site && site.placement !== "external") {
     const op = (site.openings && site.openings[0])
@@ -1211,6 +1220,16 @@ function complexInputOf(input) {
       width: r.width || 6,
       length: r.length || (r.modules && r.modules[0] && r.modules[0].length) || 21.5,
     }));
+  } else if (placement0 !== "external" && ramp0) {
+    // 내부형(레거시)도 단지형 엔진용 진입 스텁 — 가장자리 코어 구획 모듈을 쓰게 한다.
+    ramps = [{
+      ...ramp0,
+      placement: "external",
+      edge: ramp0.edge || plate.roadEdge || "w",
+      t: ramp0.t != null ? ramp0.t : 10,
+      width: ramp0.width || 6,
+      length: Math.max(Number(ramp0.length) || 21.5, 12),
+    }];
   }
   return {
     plate: { ...plate, blockRects: towers, keepClear },
@@ -1221,7 +1240,7 @@ function complexInputOf(input) {
     obstacles,
     keepClear,
     moduleSite: site || null,
-    allowInternalModule: Boolean(site && site.placement !== "external"),
+    allowInternalModule: Boolean(site && site.placement !== "external") || placement0 !== "external",
   };
 }
 
@@ -1943,9 +1962,13 @@ function layoutCore(input) {
   if (shape.fallbackFrom === "spiral") {
     ramp.form = shape.kind === "curved" ? "curve90" : "straight";
   }
+  // 외부 외곽 회전은 건축선 밖 띠라 평면 안 차로를 통째로 자르지 않는다(진입 lip만 막음).
+  const spiralExternal = shape.kind === "spiral" && (shape.external || (ramp.placement || "internal") === "external");
   const internal = modSite
     ? (modSite.placement !== "external" && (modSite.block || []).length > 0)
-    : ((ramp.placement || "internal") === "internal" || shape.kind === "spiral" || shape.externalCurve);
+    : ((ramp.placement || "internal") === "internal"
+      || (shape.kind === "spiral" && !spiralExternal)
+      || shape.externalCurve);
   // 지하 2층+ 다른 경로(alternate)면 층간 램프 자리도 평면에 비워 둔다.
   const lowerMode = plate.lowerRampMode || input.lowerRampMode || "alternate";
   const rampPieces = [];
@@ -4234,6 +4257,10 @@ function innerPlateOf(plate, c) {
 function withGap(ramp, plate, raw) {
   const c = edgeGap(plate);
   if (!c || !ramp) return raw(ramp, plate);
+  // 외곽 회전은 건축선 절대좌표 — gap을 다시 넣으면 이격 밖으로 밀린다
+  if (rampFormOf(ramp, plate && plate.rampForm) === "spiral") {
+    return raw(ramp, plate);
+  }
   // 모듈 사슬은 이미 절대좌표 AABB — gap 보정을 다시 하면 어긋나거나 NaN이 난다
   if (usesModuleLayout(ramp, plate)) {
     const box = moduleFootprintAabb(ramp);

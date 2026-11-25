@@ -1,4 +1,4 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=283";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=284";
 import {
   analyzeOnPlate, buildChain, slopePlan, usesModuleLayout,
 } from "./rampModules.js?v=282";
@@ -8,7 +8,7 @@ import {
 import {
   emit, moveOpening, moveRamp, moveRampFree, placeOpening, placeRamp,
   selectCore, selectItem, setParkPolygon, state, subscribe, updateCore,
-} from "./state.js?v=283";
+} from "./state.js?v=284";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -349,10 +349,21 @@ export function mountPlan(canvas) {
     const rampHit = hitRampDetail(world);
     if (rampHit && state.tool !== "entrance" && state.tool !== "exit") {
       selectItem({ type: "ramp", id: rampHit.id, module: rampHit.module });
-      const free = rampHit.ramp?.modules?.length;
-      drag = free
-        ? { mode: "rampFree", id: rampHit.id, ox: world.x - (rampHit.ramp.x || 0), oy: world.y - (rampHit.ramp.y || 0) }
-        : { mode: "ramp", id: rampHit.id, edge: rampHit.ramp.edge };
+      const r = rampHit.ramp;
+      // 외곽 회전·외부형·모듈 사슬은 이격 띠까지 자유 이동
+      const free = Boolean(
+        r?.modules?.length
+        || r?.form === "spiral"
+        || state.rampForm === "spiral"
+        || (r?.placement || state.rampPlacement) === "external",
+      );
+      if (free) {
+        const ax = Number.isFinite(r.x) ? r.x : (rampFootprint(r, state.plate)?.x || 0);
+        const ay = Number.isFinite(r.y) ? r.y : (rampFootprint(r, state.plate)?.y || 0);
+        drag = { mode: "rampFree", id: rampHit.id, ox: world.x - ax, oy: world.y - ay };
+      } else {
+        drag = { mode: "ramp", id: rampHit.id, edge: r.edge };
+      }
       canvas.setPointerCapture(event.pointerId);
       return;
     }
