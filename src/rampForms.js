@@ -121,9 +121,22 @@ export function lowerFloorRamp(groundRamp, plate, mode = "alternate", lowerForm 
     ? (override?.placement || groundRamp.placement || "external")
     : (override?.placement || "internal");
 
+  // 층간 램프는 출입 모듈 사슬을 그대로 쓰지 않는다(다른 변·형태인데 옛 사슬이면 3D가 팬/어긋난 메시가 됨).
+  const stripChain = {
+    modules: undefined,
+    x: undefined,
+    y: undefined,
+    heading: undefined,
+    mode: undefined,
+    legacy: undefined,
+    innerRadius: undefined,
+    levels: undefined,
+    mixed: undefined,
+  };
   if (mode === "same" && !override) {
     return {
       ...groundRamp,
+      ...stripChain,
       form,
       level: "lower",
       length,
@@ -140,6 +153,7 @@ export function lowerFloorRamp(groundRamp, plate, mode = "alternate", lowerForm 
   const keepSpiralPath = form === "spiral" && baseForm === "spiral" && !override;
   return {
     ...groundRamp,
+    ...stripChain,
     id: (Number(groundRamp.id) || 1) + 1000,
     groundId: groundRamp.id,
     edge: keepSpiralPath ? groundRamp.edge : edge,
@@ -749,9 +763,13 @@ export function externalBend9090Shape(ramp, plate, helpers) {
   }
   // 5) 출구 직선 (벽 → 안)
   pushUV(mouthB, lip, lip, RAMP_SLOPE_STRAIGHT);
-  if (hAcc < H - 0.05) {
-    const last = path[path.length - 1];
-    path.push({ ...last, h: H });
+  // 높이 부족분은 경로 전체에 다시 펴서, 같은 XY에 수직으로 떨어지는 끝점(팬 메시)을 만들지 않는다.
+  if (path.length >= 2 && hAcc > 1e-6 && Math.abs(hAcc - H) > 0.05) {
+    const scale = H / hAcc;
+    path.forEach((p) => { p.h = round3(Math.min(H, p.h * scale)); });
+    hAcc = H;
+  } else if (path.length) {
+    path[path.length - 1].h = H;
   }
 
   const xs = path.map((p) => p.x);
@@ -764,6 +782,7 @@ export function externalBend9090Shape(ramp, plate, helpers) {
     pieces,
     polygons: pieces.map(rectPoly),
     path,
+    width: W,
     segments: [
       { name: "입구 직선", length: round1(lip), drop: round3(lip * RAMP_SLOPE_STRAIGHT * ease), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
       { name: "1차 90°", length: round1(arc), drop: round3(arc * RAMP_SLOPE_CURVE * ease), slope: round3(RAMP_SLOPE_CURVE * ease) },
@@ -857,9 +876,12 @@ export function externalUTurn180Shape(ramp, plate, helpers) {
     pushUV(uc + Rc * Math.cos(a), Rc * Math.sin(a), arc / steps, RAMP_SLOPE_CURVE);
   }
   pushUV(mouthB, lip, lip, RAMP_SLOPE_STRAIGHT);
-  if (hAcc < H - 0.05) {
-    const last = path[path.length - 1];
-    path.push({ ...last, h: H });
+  if (path.length >= 2 && hAcc > 1e-6 && Math.abs(hAcc - H) > 0.05) {
+    const scale = H / hAcc;
+    path.forEach((p) => { p.h = round3(Math.min(H, p.h * scale)); });
+    hAcc = H;
+  } else if (path.length) {
+    path[path.length - 1].h = H;
   }
 
   const xs = path.map((p) => p.x);
@@ -872,6 +894,7 @@ export function externalUTurn180Shape(ramp, plate, helpers) {
     pieces,
     polygons: [rectPoly(pieces[0]), ring, rectPoly(pieces[2])],
     path,
+    width: W,
     segments: [
       { name: "입구 직선", length: round1(lip), drop: round3(lip * RAMP_SLOPE_STRAIGHT * ease), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
       { name: "180° 나선", length: round1(arc), drop: round3(arc * RAMP_SLOPE_CURVE * ease), slope: round3(RAMP_SLOPE_CURVE * ease) },

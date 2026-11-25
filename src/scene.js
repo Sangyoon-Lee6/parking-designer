@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=289";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=290";
 import { analyzeOnPlate, rampMesh, slopePlan } from "./rampModules.js?v=282";
-import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=289";
+import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=290";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -387,18 +387,30 @@ function addRamp(ramp, material, base, hazard) {
   const footprint = shape.footprint || rampFootprint(ramp, plate);
   const H = FLOOR_H;
   // path에 하강 h가 있으면 리본 메시로 그린다(곡선·원형·직선 공통).
-  if (shape.path && shape.path.length >= 2 && shape.path.some((p) => p.h != null)) {
+  const curved = shape.path && shape.path.length >= 2 && shape.path.some((p) => p.h != null)
+    && (shape.kind === "curved" || shape.kind === "spiral" || shape.outerKind || shape.externalCurve);
+  const hasPath = shape.path && shape.path.length >= 2 && shape.path.some((p) => p.h != null);
+  if (hasPath) {
     addRampRibbon(shape, ramp, material, base, H);
   } else {
     addRampQuad(ramp, footprint, material, base, H);
   }
-  addRampEdges(ramp, footprint, base, hazard);
+  // 곡선·외곽 램프는 AABB 연석이 부채꼴/상자 벽을 만들므로 경로 리본 치마만 쓴다.
+  if (!curved) addRampEdges(ramp, footprint, base, hazard);
 }
 
 /** 모듈 사슬 램프: rampMesh 삼각형을 BufferGeometry로. */
 function addModuleRamp(ramp, material, base, hazard, level = 0) {
   const plate = state.plate;
   const H = FLOOR_H;
+  // 외곽·곡선 형태는 legacy path 리본이 맞고, 직선 모듈 사슬로 그리면 팬/어긋난 메시가 된다.
+  const form = ramp.form || plate?.rampForm || "";
+  // 외곽·곡선 형태는 shape.path 리본이 정답. 직선 모듈 사슬로 그리면 어긋나거나 팬처럼 보인다.
+  const preferShape = form === "spiral" || form === "outer180" || form === "outer9090" || form === "curve90";
+  if (preferShape || isLegacyEquivalent(ramp, plate)) {
+    addRamp(ramp, material, base, hazard);
+    return;
+  }
   const legal = Number(plate.legalStalls) || Number(plate.stallRules?.legalStalls) || 0;
   const plan = slopePlan(ramp, { floorHeight: H, legalStalls: legal });
   // groundY: 이 층 슬래브 위가 램프 시작 높이. rampMesh는 top - k*H.
@@ -423,32 +435,87 @@ function addModuleRamp(ramp, material, base, hazard, level = 0) {
   // 외부 연결 개구부는 addWalls cuts가 edge/t를 씀(applyPlateMeta로 맞춤)
 }
 
-/** 중심선 path(x,y,h)를 따라 폭 있는 경사 리본. */
+/**
+ * 중심선 path(x,y,h)를 따라 폭·두께 있는 경사 리본.
+ * 구간마다 독립 법선으로 삼각형을 붙이면 곡선에서 부채꼴 팬이 생기므로,
+ * 접선 평균 오프셋 + 공유 정점 + 슬래브 두께로 통로처럼 그린다.
+ */
 function addRampRibbon(shape, ramp, material, base, H) {
-  const path = shape.path;
-  const half = Math.max(3, (ramp.width || shape.width || 6) / 2);
+  const raw = shape.path || [];
+  // XY 중복·극소 구간 제거(수직으로만 떨어지는 끝점 포함)
+  const path = [];
+  raw.forEach((p) => {
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+    const prev = path[path.length - 1];
+    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < 0.08) {
+      // 같은 자리 높이만 갱신
+      if (p.h != null) prev.h = p.h;
+      return;
+    }
+    path.push({ x: p.x, y: p.y, h: p.h == null ? (prev ? prev.h : 0) : p.h });
+  });
+  if (path.length < 2) return;
+
+  const laneW = Number(shape.width) || Number(ramp.width) || 6;
+  const half = Math.min(Math.max(laneW, 6) / 2, 4.0); // 차로 폭의 절반, 곡선 안쪽이 접히지 않게 상한
+  const thick = 0.22;
+  const wallH = 0.55;
+
+  // 각 점에서 접선→수평 법선 (끝점은 이웃 한쪽)
+  const frames = path.map((p, i) => {
+    const a = path[Math.max(0, i - 1)];
+    const b = path[Math.min(path.length - 1, i + 1)];
+    let tx = b.x - a.x;
+    let tz = b.y - a.y;
+    let len = Math.hypot(tx, tz);
+    if (len < 1e-6) {
+      const j = Math.min(path.length - 1, i + 1);
+      const k = Math.max(0, i - 1);
+      tx = path[j].x - path[k].x;
+      tz = path[j].y - path[k].y;
+      len = Math.hypot(tx, tz) || 1;
+    }
+    tx /= len;
+    tz /= len;
+    const y = base + H - Math.max(0, Math.min(H, Number(p.h) || 0));
+    return {
+      cx: p.x,
+      cz: p.y,
+      y,
+      nx: -tz,
+      nz: tx,
+    };
+  });
+
   const positions = [];
   const pushTri = (a, b, c) => {
     positions.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
   };
-  for (let i = 0; i < path.length - 1; i += 1) {
-    const p0 = path[i];
-    const p1 = path[i + 1];
-    const dx = p1.x - p0.x;
-    const dz = p1.y - p0.y;
-    const len = Math.hypot(dx, dz);
-    if (len < 0.08) continue; // 모서리 중복점으로 생기는 팬/겹침 메시 방지
-    const nx = (-dz / len) * half;
-    const nz = (dx / len) * half;
-    const y0 = base + H - (p0.h == null ? 0 : p0.h);
-    const y1 = base + H - (p1.h == null ? H : p1.h);
-    const a = [p0.x + nx, y0, p0.y + nz];
-    const b = [p0.x - nx, y0, p0.y - nz];
-    const c = [p1.x - nx, y1, p1.y - nz];
-    const d = [p1.x + nx, y1, p1.y + nz];
-    pushTri(a, b, c);
-    pushTri(a, c, d);
+  const left = (f) => [f.cx + f.nx * half, f.y, f.cz + f.nz * half];
+  const right = (f) => [f.cx - f.nx * half, f.y, f.cz - f.nz * half];
+  const down = (v) => [v[0], v[1] - thick, v[2]];
+  const up = (v, h) => [v[0], v[1] + h, v[2]];
+
+  for (let i = 0; i < frames.length - 1; i += 1) {
+    const f0 = frames[i];
+    const f1 = frames[i + 1];
+    const l0 = left(f0);
+    const r0 = right(f0);
+    const l1 = left(f1);
+    const r1 = right(f1);
+    // 윗면
+    pushTri(l0, r0, r1);
+    pushTri(l0, r1, l1);
+    // 아랫면(두께)
+    pushTri(down(r0), down(l0), down(l1));
+    pushTri(down(r0), down(l1), down(r1));
+    // 측면 치마(얇은 벽) — AABB 연석 대신 경로를 따라감
+    pushTri(l0, l1, up(l1, wallH));
+    pushTri(l0, up(l1, wallH), up(l0, wallH));
+    pushTri(r1, r0, up(r0, wallH));
+    pushTri(r1, up(r0, wallH), up(r1, wallH));
   }
+
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
   geometry.computeVertexNormals();
