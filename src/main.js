@@ -1,13 +1,13 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=290";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=291";
 import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=282";
-import { drawThumb, mountPlan } from "./plan.js?v=290";
+import { drawThumb, mountPlan } from "./plan.js?v=291";
 import { stallRuleTargets } from "./stallTypes.js?v=282";
 import {
   plateDimsFromPolygon, presetChamferRect, presetL, presetTrapezoid, presetU,
   rectPolygon, validatePolygon, normalizePolygon, offsetPolygon, polygonArea, edgeLengths,
 } from "./polygon.js?v=282";
 import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=282";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, pinLowerRampOverrides, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=290";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, pinLowerRampOverrides, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=291";
 
 // 시트·DXF·주변지도는 클릭 시에만 불러 초기 로딩을 줄인다.
 let sheetMod = null;
@@ -731,7 +731,16 @@ $("remove-selected").addEventListener("click", removeSelection);
 $("to-3d").addEventListener("click", open3d);
 $("back-plan").addEventListener("click", () => { state.resultTab = "plan"; setWizard(7); });
 $("tab-model").addEventListener("click", async () => {
-  if (wizardSlide !== 8) setWizard(8);
+  if (wizardSlide !== 8) {
+    wizardSlide = 8;
+    document.body.dataset.wizard = "8";
+    document.querySelectorAll(".slide").forEach((slide) => {
+      const on = Number(slide.dataset.slide) === 8;
+      slide.hidden = !on;
+      slide.classList.toggle("on", on);
+    });
+    state.step = 3;
+  }
   if (!readyFor3d()) {
     state.resultTab = "plan";
     const { errors } = issueGroups();
@@ -742,7 +751,6 @@ $("tab-model").addEventListener("click", async () => {
     emit();
     return;
   }
-  state.resultTab = "model";
   await open3d();
 });
 $("tab-sheet").addEventListener("click", () => {
@@ -854,6 +862,7 @@ subscribe(() => { if (wizardSlide > 4 && !$("context-view").hidden) closeContext
 render();
 
 let sceneMount = null;
+let sceneApi = null;
 let playTimer = 0;
 let compareKey = "";
 
@@ -874,10 +883,14 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=290")
-      .then((module) => module.mountScene($("scene-root")))
+    sceneMount = import("./scene.js?v=291")
+      .then((module) => {
+        sceneApi = module.mountScene($("scene-root"));
+        return sceneApi;
+      })
       .catch((error) => {
         sceneMount = null;
+        sceneApi = null;
         throw error;
       });
   }
@@ -894,7 +907,6 @@ async function open3d() {
     return;
   }
   try {
-    await ensureScene();
     state.resultTab = "model";
     state.step = 3;
     if (wizardSlide !== 8) {
@@ -906,23 +918,23 @@ async function open3d() {
         slide.classList.toggle("on", on);
       });
     }
-    // 뷰를 먼저 보이게 한 뒤 리사이즈·재빌드 (hidden 상태에서 0×0 캔버스 방지)
+    // 뷰를 먼저 보이게 한 뒤 마운트·리사이즈 (hidden 0×0 캔버스 방지)
     $("scene-view").hidden = false;
     $("plan-view").hidden = true;
     $("sheet-view").hidden = true;
     document.body.classList.add("step-result");
+    const root = $("scene-root");
+    if (root) {
+      root.style.width = "100%";
+      root.style.height = "100%";
+    }
+    // 한 프레임 기다려 레이아웃이 잡힌 뒤 Three를 붙인다
+    await new Promise((r) => requestAnimationFrame(r));
+    await ensureScene();
     emit();
-    requestAnimationFrame(() => {
-      const root = $("scene-root");
-      if (root) {
-        // ResizeObserver가 크기 갱신하도록 레이아웃 강제
-        root.style.width = "100%";
-        root.style.height = "100%";
-        window.dispatchEvent(new Event("resize"));
-      }
-      const btn = $("reset-camera");
-      if (btn) btn.click();
-    });
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    if (sceneApi?.forceRebuild) sceneApi.forceRebuild();
+    else $("reset-camera")?.click();
   } catch (error) {
     state.resultTab = "plan";
     $("step2-error").hidden = false;

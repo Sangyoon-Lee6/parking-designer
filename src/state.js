@@ -20,7 +20,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=290";
+} from "./layout.js?v=291";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -309,7 +309,12 @@ export function issueGroups() {
       continue;
     }
     if (issue.type === "column") hasColumnIssue = true;
-    if (issue.type === "opening" || issue.type === "ramp" || issue.type === "network") hasNetworkIssue = true;
+    // 동선·램프·출입 이슈는 3D를 막지 않음 — 경고로만
+    if (issue.type === "opening" || issue.type === "ramp" || issue.type === "network" || issue.type === "road") {
+      hasNetworkIssue = true;
+      warnings.push(label);
+      continue;
+    }
     errors.push(label);
   }
   // metrics.columnHits는 이미 type:"column" 이슈로 들어가므로 중복 문구를 넣지 않는다.

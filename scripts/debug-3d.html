@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../vendor/three/build/three.module.js",
+        "three/addons/": "../vendor/three/examples/jsm/"
+      }
+    }
+  </script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #111; color: #eee; font: 14px sans-serif; }
+    #scene-view { position: absolute; inset: 40px 10px 10px; display: flex; flex-direction: column; }
+    #scene-root { flex: 1; min-height: 0; background: #444; }
+    #scene-root canvas { width: 100%; height: 100%; display: block; }
+    #log { position: absolute; left: 8px; top: 4px; right: 8px; height: 32px; overflow: hidden; white-space: nowrap; }
+    #reset-camera { display: none; }
+  </style>
+</head>
+<body>
+  <div id="log">booting…</div>
+  <div id="scene-view">
+    <div id="scene-root"></div>
+  </div>
+  <button id="reset-camera" type="button">reset</button>
+  <script type="module">
+    const log = (msg) => {
+      const el = document.getElementById("log");
+      el.textContent = msg;
+      console.log("[debug-3d]", msg);
+      window.__DEBUG_3D__ = window.__DEBUG_3D__ || [];
+      window.__DEBUG_3D__.push(String(msg));
+    };
+    window.addEventListener("error", (e) => log("ERROR: " + (e.message || e)));
+    window.addEventListener("unhandledrejection", (e) => log("REJECT: " + (e.reason && e.reason.message ? e.reason.message : e.reason)));
+
+    try {
+      const { mountScene } = await import("../src/scene.js?v=291");
+      const {
+        state, emit, generatePlate, recommendLayouts, applyVariant, readyFor3d, summary,
+      } = await import("../src/state.js?v=291");
+
+      state.parkWidth = 48;
+      state.parkDepth = 42;
+      state.siteMargin = 20;
+      state.siteMargins = { n: 20, s: 20, e: 20, w: 20 };
+      state.rampPlacement = "external";
+      state.rampForm = "outer180";
+      state.lowerRampForm = "auto";
+      state.lowerRampMode = "alternate";
+      state.roadEdge = "w";
+      state.floorHeight = 3.2;
+      state.columnSpacing = 8.1;
+      state.demand = {
+        ...(state.demand || {}),
+        ordinance: 1,
+        areaPerStall: 35,
+        plannedFloors: 2,
+        legalStalls: 112,
+        required: 112,
+        active: { apartment: true },
+      };
+      state.step = 3;
+      state.resultTab = "model";
+      state.floorView = "all";
+
+      generatePlate();
+      recommendLayouts();
+      const best = Math.max(0, state.variants.findIndex((v) => v.recommended));
+      applyVariant(best >= 0 ? best : 0);
+
+      const ready = readyFor3d();
+      const info = summary();
+      log(`ready=${ready} stalls=${state.stalls.length} ramps=${state.ramps.length} floors=${info.floors}`);
+
+      mountScene(document.getElementById("scene-root"));
+      emit();
+      document.getElementById("reset-camera").click();
+
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await new Promise((r) => setTimeout(r, 400));
+
+      const canvas = document.querySelector("#scene-root canvas");
+      const root = document.getElementById("scene-root");
+      const rr = root.getBoundingClientRect();
+      const cr = canvas ? canvas.getBoundingClientRect() : null;
+      const ok = canvas && cr.width > 100 && cr.height > 100;
+      log(`DONE ok=${ok} root=${Math.round(rr.width)}x${Math.round(rr.height)} canvas=${canvas ? `${canvas.width}x${canvas.height} css=${Math.round(cr.width)}x${Math.round(cr.height)}` : "none"} children=${state.stalls.length}`);
+      window.__DEBUG_OK__ = ok;
+    } catch (err) {
+      log("FATAL: " + (err && err.stack ? err.stack : err));
+      window.__DEBUG_OK__ = false;
+    }
+  </script>
+</body>
+</html>

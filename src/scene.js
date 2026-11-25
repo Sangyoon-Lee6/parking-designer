@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=290";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=291";
 import { analyzeOnPlate, rampMesh, slopePlan } from "./rampModules.js?v=282";
-import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=290";
+import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=291";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -18,7 +18,7 @@ export function mountScene(container) {
   scene = new THREE.Scene();
   scene.background = new THREE.Color("#ddd6cb");
   camera = new THREE.PerspectiveCamera(42, 1, 0.1, 800);
-  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
   container.appendChild(renderer.domElement);
@@ -42,40 +42,66 @@ export function mountScene(container) {
   building = new THREE.Group();
   scene.add(building);
 
+  let lastSizeOk = false;
   const resize = () => {
     const rect = container.getBoundingClientRect();
-    camera.aspect = rect.width / Math.max(rect.height, 1);
+    const w = Math.max(1, rect.width);
+    const h = Math.max(1, rect.height);
+    const ok = rect.width > 2 && rect.height > 2;
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(rect.width, rect.height, false);
+    renderer.setSize(w, h, false);
+    lastSizeOk = ok;
+    return ok;
   };
-  new ResizeObserver(resize).observe(container);
+  new ResizeObserver(() => {
+    const wasOk = lastSizeOk;
+    const ok = resize();
+    // 0×0 → 실제 크기로 바뀌면 카메라를 다시 잡는다
+    if (ok && !wasOk && state.resultTab === "model") {
+      signature = "";
+      tryBuild(0);
+    }
+  }).observe(container);
   resize();
 
   const sceneView = () => document.getElementById("scene-view");
   const sceneVisible = () => {
     const view = sceneView();
-    return Boolean(view && !view.hidden && state.step === 3 && state.resultTab === "model");
+    return Boolean(view && !view.hidden && state.resultTab === "model");
+  };
+
+  const paintOnce = () => {
+    if (!renderer || !scene || !camera) return;
+    controls.update();
+    renderer.render(scene, camera);
+  };
+
+  const tryBuild = (attempt = 0) => {
+    if (state.resultTab !== "model") return;
+    const ok = resize();
+    if (!ok && attempt < 12) {
+      requestAnimationFrame(() => tryBuild(attempt + 1));
+      return;
+    }
+    try {
+      rebuild(sun);
+      paintOnce();
+    } catch (err) {
+      signature = ""; // 실패 시 재시도 가능하게
+      console.error("3D rebuild failed", err);
+      const box = document.getElementById("step2-error");
+      if (box) {
+        box.hidden = false;
+        box.textContent = `3D 모델 생성 오류: ${err && err.message ? err.message : err}`;
+      }
+    }
   };
 
   subscribe(() => {
-    if (state.step !== 3 || state.resultTab !== "model") return;
-    requestAnimationFrame(() => {
-      resize();
-      // hidden이었다가 열리면 한 프레임 더 기다려 크기 확정
-      requestAnimationFrame(() => {
-        resize();
-        try {
-          rebuild(sun);
-        } catch (err) {
-          console.error("3D rebuild failed", err);
-          const box = document.getElementById("step2-error");
-          if (box) {
-            box.hidden = false;
-            box.textContent = `3D 모델 생성 오류: ${err && err.message ? err.message : err}`;
-          }
-        }
-      });
-    });
+    if (state.resultTab !== "model") return;
+    // 레이아웃 확정 후 빌드 (hidden→show 직후 0×0 방지)
+    requestAnimationFrame(() => requestAnimationFrame(() => tryBuild(0)));
   });
 
   const loop = () => {
@@ -89,17 +115,17 @@ export function mountScene(container) {
 
   document.getElementById("reset-camera").addEventListener("click", () => {
     signature = "";
-    resize();
-    if (state.step === 3) {
-      try { rebuild(sun); } catch (err) { console.error("3D rebuild failed", err); }
-    }
+    tryBuild(0);
   });
+
+  // open3d에서 강제 재빌드할 때 사용
+  return { forceRebuild: () => { signature = ""; tryBuild(0); }, resize };
 }
 
 const paint = makePaint();
 
 function rebuild(sun) {
-  if (!state.plate) return;
+  if (!state.plate || !building || !camera || !controls) return;
   const info = summary();
   const floors = Math.max(1, info.floors);
   const drawn = Math.min(floors, DRAW_CAP);
@@ -120,7 +146,6 @@ function rebuild(sun) {
     floorView: state.floorView,
   });
   const keepCamera = signature === next;
-  signature = next;
   host = building;
   clearGroup(building);
 
@@ -192,7 +217,14 @@ function rebuild(sun) {
 
   const stack = single ? 1 : drawn;
   const rampReach = state.ramps.reduce((reach, ramp) => {
-    const box = rampFootprint(ramp, plate);
+    let box;
+    try {
+      const shape = rampShape(ramp, plate);
+      box = shape.footprint || rampFootprint(ramp, plate);
+    } catch (e) {
+      box = rampFootprint(ramp, plate);
+    }
+    if (!box || !Number.isFinite(box.x) || !Number.isFinite(box.y)) return reach;
     return Math.max(reach, Math.max(0, -box.x), Math.max(0, -box.y), Math.max(0, box.x + box.w - plate.width), Math.max(0, box.y + box.d - plate.depth));
   }, 0);
   const siteM = siteMarginsOf({
@@ -201,7 +233,8 @@ function rebuild(sun) {
     siteMargins: plate.siteMargins || state.siteMargins,
   });
   const marginReach = Math.max(siteM.n || 0, siteM.s || 0, siteM.e || 0, siteM.w || 0, rampReach);
-  const span = Math.max(plate.width + marginReach, plate.depth + marginReach, stack * FLOOR_H, towerH + FLOOR_H);
+  let span = Math.max(plate.width + marginReach, plate.depth + marginReach, stack * FLOOR_H, towerH + FLOOR_H, 20);
+  if (!Number.isFinite(span) || span < 1) span = Math.max(plate.width || 40, plate.depth || 40, 20);
   sun.position.set(-plate.width * 0.2, span, plate.depth * 0.2);
   sun.target.position.set(plate.width / 2, single ? 1 : -drawn * FLOOR_H / 2, plate.depth / 2);
   sun.shadow.camera.left = -span;
@@ -215,10 +248,17 @@ function rebuild(sun) {
   if (!keepCamera) {
     const center = new THREE.Vector3(plate.width / 2, single ? 1.2 : -((drawn - 1) * FLOOR_H) / 2, plate.depth / 2);
     const dist = towerH > 0 ? 1.25 : 1;
-    camera.position.set(center.x + plate.width * 0.9 * dist, center.y + span * 0.42 * dist, center.z + plate.depth * 1.05 * dist);
-    controls.target.copy(center);
-    controls.update();
+    const cx = center.x + plate.width * 0.9 * dist;
+    const cy = center.y + span * 0.42 * dist;
+    const cz = center.z + plate.depth * 1.05 * dist;
+    if (Number.isFinite(cx) && Number.isFinite(cy) && Number.isFinite(cz)) {
+      camera.position.set(cx, cy, cz);
+      controls.target.copy(center);
+      controls.update();
+    }
   }
+  // 성공한 뒤에만 signature 고정 — 중간에 throw 나면 재시도 가능
+  signature = next;
 }
 
 /** 지상선 위 반투명 타워 매스. B1·전체 층 보기일 때만. 반환: 최고 타워 높이(m). */

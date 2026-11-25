@@ -8,7 +8,7 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=290";
+} from "./rampForms.js?v=291";
 import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=284";
 import {
   analyzeOnPlate,
@@ -33,7 +33,7 @@ export {
   spiralRampShape,
   externalBend9090Shape,
   externalUTurn180Shape,
-} from "./rampForms.js?v=290";
+} from "./rampForms.js?v=291";
 export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=284";
 
 /** 모듈 사슬 램프의 평면 분석(legacy 동등이면 null). */
@@ -753,16 +753,38 @@ function moduleFootprintAabb(ramp) {
 }
 
 function rampFootprintRaw(ramp, plate) {
+  const form = rampFormOf(ramp, plate && plate.rampForm);
+  const external = (ramp.placement || "internal") === "external";
+  // 외곽·외부 곡선은 shape.footprint를 우선(직선 모듈 AABB가 180° 자리를 가로채지 않게)
+  if (form === "spiral" || form === "outer180" || form === "outer9090" || (external && form === "curve90")) {
+    try {
+      const shape = rampShapeRaw(ramp, plate);
+      if (shape?.footprint && shape.footprint.w > 0.05 && shape.footprint.d > 0.05) {
+        return shape.footprint;
+      }
+      const ps = shape?.pieces || [];
+      if (ps.length) {
+        const x0 = Math.min(...ps.map((p) => p.x));
+        const y0 = Math.min(...ps.map((p) => p.y));
+        const x1 = Math.max(...ps.map((p) => p.x + p.w));
+        const y1 = Math.max(...ps.map((p) => p.y + p.d));
+        if (Number.isFinite(x0) && Number.isFinite(y0) && x1 > x0 && y1 > y0) {
+          return { x: x0, y: y0, w: x1 - x0, d: y1 - y0 };
+        }
+      }
+    } catch (e) { /* 직선 footprint로 하락 */ }
+  }
+
   // 모듈 사슬이 있으면 AABB를 우선 (length 누락 시 NaN 방지)
   const modBox = moduleFootprintAabb(ramp);
   if (modBox && modBox.w > 0.05 && modBox.d > 0.05) return modBox;
 
-  if (rampFormOf(ramp, plate && plate.rampForm) === "spiral") {
+  if (form === "spiral") {
     const shape = spiralRampShape(ramp, plate);
     if (shape.ok) return shape.footprint || shape.pieces[0];
     // 실패 시 직선 footprint로 (깨진 외곽 AABB가 주차 영역을 삼키지 않게)
   }
-  if ((ramp.placement || "internal") === "external" && rampFormOf(ramp, plate && plate.rampForm) === "curve90") {
+  if (external && form === "curve90") {
     const shape = externalCurve90Shape(ramp, plate, {
       localFrame, arcSectors, straightDrop, straightSegments, rectPoly,
     });
@@ -783,7 +805,6 @@ function rampFootprintRaw(ramp, plate) {
     || (Array.isArray(ramp.modules) ? ramp.modules.reduce((s, m) => s + (Number(m.length) || 0), 0) : 0)
     || defaultRampLength(plate, edge);
   const t = Number.isFinite(Number(ramp.t)) ? Number(ramp.t) : (edge === "n" || edge === "s" ? plate.width : plate.depth) / 2;
-  const external = (ramp.placement || "internal") === "external";
   const k = insetOf(ramp);
   if (edge === "s") return { x: t - width / 2, y: external ? -length : k, w: width, d: length };
   if (edge === "n") return { x: t - width / 2, y: external ? plate.depth : plate.depth - k - length, w: width, d: length };
@@ -4548,8 +4569,15 @@ function innerPlateOf(plate, c) {
 function withGap(ramp, plate, raw) {
   const c = edgeGap(plate);
   if (!c || !ramp) return raw(ramp, plate);
-  // 외곽 회전은 건축선 절대좌표 — gap을 다시 넣으면 이격 밖으로 밀린다
-  if (rampFormOf(ramp, plate && plate.rampForm) === "spiral") {
+  // 외곽·외부 곡선은 건축선 절대좌표 — gap을 다시 넣으면 경로·AABB가 밀리거나 NaN이 난다
+  const form = rampFormOf(ramp, plate && plate.rampForm);
+  const external = (ramp.placement || "internal") === "external";
+  if (
+    form === "spiral"
+    || form === "outer180"
+    || form === "outer9090"
+    || (external && form === "curve90")
+  ) {
     return raw(ramp, plate);
   }
   // 모듈 사슬은 이미 절대좌표 AABB — gap 보정을 다시 하면 어긋나거나 NaN이 난다
@@ -4558,7 +4586,6 @@ function withGap(ramp, plate, raw) {
     if (box && box.w > 0.05 && box.d > 0.05) return box;
   }
   const inner = innerPlateOf(plate, c);
-  const external = (ramp.placement || "internal") === "external";
   const res = raw({ ...ramp, t: ramp.t - c }, inner);
   // 외부형 램프는 바깥에 붙으므로 변 방향으로만 옮기고, 수직 방향은 진짜 외벽에 붙인다.
   if (!external) return shiftDeep(res, c, c);
