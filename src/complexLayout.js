@@ -1129,8 +1129,9 @@ function alignOffsets(plate, towers, Sd) {
   const mod = moduleSpan(Sd);
   const offsets = new Set();
   towers.forEach((t) => {
-    // 동 앞/뒷면에 차로 가장자리·줄 뒷선이 오도록
-    [t.y - Sd, t.y + t.d - Sd - AISLE, t.y - 2 * Sd - AISLE, t.y + t.d].forEach((v) => {
+    // 동 앞/뒷면에 차로 가장자리·줄 뒷선이 오도록 (가장자리 코어용 구획 모듈 위상)
+    [t.y - Sd, t.y + t.d - Sd - AISLE, t.y - 2 * Sd - AISLE, t.y + t.d,
+      t.y - AISLE, t.y + t.d - AISLE].forEach((v) => {
       const o = round3(((v % mod) + mod) % mod);
       if (o >= 0 && o < mod) offsets.add(o);
     });
@@ -1138,25 +1139,57 @@ function alignOffsets(plate, towers, Sd) {
   return [...offsets].filter((v) => Number.isFinite(v));
 }
 
+/** 동이 어느 변에 몰려 있는지 — 가장자리 코어면 그 변과 나란한 줄(axis)을 우선. */
+function edgeCorePreferAxis(plate, towers) {
+  if (!towers.length || !plate) return null;
+  const ring = AISLE + stallDepthOf(plate);
+  let north = 0;
+  let south = 0;
+  let west = 0;
+  let east = 0;
+  towers.forEach((t) => {
+    const area = Math.max(1, t.w * t.d);
+    if (t.y + t.d >= plate.depth - ring - 0.5) north += area;
+    if (t.y <= ring + 0.5) south += area;
+    if (t.x <= ring + 0.5) west += area;
+    if (t.x + t.w >= plate.width - ring - 0.5) east += area;
+  });
+  const ns = north + south;
+  const ew = east + west;
+  if (ns < 1 && ew < 1) return null;
+  // 북·남에 동이 많으면 가로 줄(axis x), 동·서면 세로 줄(axis y)
+  return ns >= ew ? "x" : "y";
+}
+
 export function complexCandidates(input, opts = {}) {
   if (!input?.plate) return [];
   const ramp = (input.ramps || [])[0];
-  if (!ramp || (ramp.placement || "internal") !== "external") return [];
+  if (!ramp) return [];
+  // 내부형은 complexInputOf가 외부 스텁으로 바꿔 넘긴다.
+  if ((ramp.placement || "internal") !== "external" && !input.allowInternalModule) return [];
   const quick = Boolean(opts.quick);
   const Sd = stallDepthOf(input.plate);
   const towers = input.towers || input.plate.blockRects || [];
   const aligns = alignOffsets(input.plate, towers, Sd);
+  const preferAxis = edgeCorePreferAxis(input.plate, towers);
   const slacks = quick
-    ? ["start", "end", ...aligns.slice(0, 2)]
-    : ["start", "end", "mid", ...aligns.slice(0, 3)];
+    ? ["start", "end", ...aligns.slice(0, 3)]
+    : ["start", "end", "mid", ...aligns.slice(0, 5)];
   const bayFroms = quick ? ["w"] : ["w", "e"];
   const deltas = quick ? [0] : [0, -1];
+  // 가장자리 코어면 선호 축을 먼저 탐색
+  const axes = preferAxis
+    ? (quick ? [preferAxis] : [preferAxis, preferAxis === "x" ? "y" : "x"])
+    : ["x", "y"];
   const specs = [];
-  for (const axis of ["x", "y"]) {
+  for (const axis of axes) {
     for (const nDelta of deltas) {
       for (const slack of slacks) {
         for (const bayFrom of bayFroms) {
-          specs.push({ axis, nDelta, slack, bayFrom, closeLoops: false, goal: "count" });
+          specs.push({
+            axis, nDelta, slack, bayFrom, closeLoops: false, goal: "count",
+            edgeCore: preferAxis === axis,
+          });
         }
       }
     }
@@ -1173,8 +1206,15 @@ export function complexCandidates(input, opts = {}) {
   }
   raw.sort((a, b) => {
     if (a.metrics.valid !== b.metrics.valid) return a.metrics.valid ? -1 : 1;
+    // 가장자리 코어에 맞춘 축 우선
+    const ae = a.spec?.edgeCore ? 1 : 0;
+    const be = b.spec?.edgeCore ? 1 : 0;
+    if (ae !== be) return be - ae;
     if ((a.metrics.longSpans || 0) !== (b.metrics.longSpans || 0)) {
       return (a.metrics.longSpans || 0) - (b.metrics.longSpans || 0);
+    }
+    if ((a.metrics.deadEnds || 0) !== (b.metrics.deadEnds || 0)) {
+      return (a.metrics.deadEnds || 0) - (b.metrics.deadEnds || 0);
     }
     return b.metrics.stalls - a.metrics.stalls;
   });

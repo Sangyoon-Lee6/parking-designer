@@ -19,7 +19,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=283";
+} from "./layout.js?v=284";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -1105,7 +1105,9 @@ export function moveRamp(id, edge, t) {
   emit();
 }
 
-/** 사슬 시작점 평행 이동(0.5m 맞춤). live면 배치 엔진은 돌리지 않고 화면만 갱신. */
+/** 사슬 시작점 평행 이동(0.5m 맞춤). live면 배치 엔진은 돌리지 않고 화면만 갱신.
+ *  건축선~이격 사이(대지 여유)까지 허용. 외곽 회전이 밖으로 나가면 외부형으로 맞춘다.
+ */
 export function moveRampFree(id, x, y, { live = false } = {}) {
   const index = state.ramps.findIndex((item) => item.id === id);
   if (index < 0 || !state.plate) return;
@@ -1116,6 +1118,15 @@ export function moveRampFree(id, x, y, { live = false } = {}) {
   const nx = Math.max(-m.w, Math.min(W + m.e, x));
   const ny = Math.max(-m.s, Math.min(D + m.n, y));
   cur = chainMoveRamp(cur, nx, ny);
+  // 외곽 회전·시작점이 건축선 밖이면 외부형으로 — 이격 띠에 램프가 남게
+  const form = cur.form || state.rampForm || "auto";
+  const outsidePlate = nx < -0.05 || ny < -0.05 || nx > W + 0.05 || ny > D + 0.05;
+  if (outsidePlate || form === "spiral") {
+    if (outsidePlate) {
+      cur = { ...cur, placement: "external" };
+      state.rampPlacement = "external";
+    }
+  }
   const legal = Number(state.plate.legalStalls) || Number(state.demand?.required) || 0;
   const { ramp: synced } = applyPlateMeta(cur, state.plate, { legalStalls: legal });
   state.ramps[index] = synced;
