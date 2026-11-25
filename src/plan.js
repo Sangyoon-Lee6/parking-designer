@@ -1,4 +1,4 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=284";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=285";
 import {
   analyzeOnPlate, buildChain, slopePlan, usesModuleLayout,
 } from "./rampModules.js?v=282";
@@ -6,9 +6,9 @@ import {
   polygonFromPlate, snapPoint, edgeLengths, polygonArea,
 } from "./polygon.js?v=282";
 import {
-  emit, moveOpening, moveRamp, moveRampFree, placeOpening, placeRamp,
+  emit, moveLowerRamp, moveOpening, moveRamp, moveRampFree, placeOpening, placeRamp,
   selectCore, selectItem, setParkPolygon, state, subscribe, updateCore,
-} from "./state.js?v=284";
+} from "./state.js?v=285";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -130,15 +130,15 @@ export function mountPlan(canvas) {
     }
 
     const blockedRamps = new Set(state.issues.filter((issue) => issue.type === "ramp").map((issue) => issue.id));
-    const groundDraw = rampsForLevel(state.ramps, plate, 0, "same");
+    const groundDraw = rampsForLevel(state.ramps, plate, 0, "same", state.lowerRampOverrides);
     const lowerMode = state.lowerRampMode || (plate && plate.lowerRampMode) || "alternate";
-    const drawList = groundDraw.concat(
-      lowerMode === "alternate"
-        ? rampsForLevel(state.ramps, plate, 1, "alternate").map((r) => ({ ...r, _lower: true }))
-        : [],
-    );
+    const lowers = rampsForLevel(state.ramps, plate, 1, lowerMode, state.lowerRampOverrides)
+      .map((r) => ({ ...r, _lower: true }));
+    const drawList = groundDraw.concat(lowers);
     drawList.forEach((ramp) => {
-      const selected = !ramp._lower && state.selection?.type === "ramp" && state.selection.id === ramp.id;
+      const selected = ramp._lower
+        ? state.selection?.type === "lowerRamp" && state.selection.id === (ramp.groundId ?? ramp.id - 1000)
+        : state.selection?.type === "ramp" && state.selection.id === ramp.id;
       const selMod = selected ? state.selection?.module : null;
       const blocked = blockedRamps.has(ramp.id);
       const lower = ramp._lower;
@@ -348,13 +348,23 @@ export function mountPlan(canvas) {
 
     const rampHit = hitRampDetail(world);
     if (rampHit && state.tool !== "entrance" && state.tool !== "exit") {
+      if (rampHit.lower) {
+        selectItem({ type: "lowerRamp", id: rampHit.groundId });
+        drag = { mode: "lowerRamp", groundId: rampHit.groundId, edge: rampHit.ramp.edge };
+        canvas.setPointerCapture(event.pointerId);
+        return;
+      }
       selectItem({ type: "ramp", id: rampHit.id, module: rampHit.module });
       const r = rampHit.ramp;
-      // 외곽 회전·외부형·모듈 사슬은 이격 띠까지 자유 이동
+      // 외부·모듈·외곽 진입은 이격 띠까지 자유 이동
       const free = Boolean(
         r?.modules?.length
         || r?.form === "spiral"
+        || r?.form === "outer9090"
+        || r?.form === "outer180"
         || state.rampForm === "spiral"
+        || state.rampForm === "outer9090"
+        || state.rampForm === "outer180"
         || (r?.placement || state.rampPlacement) === "external",
       );
       if (free) {
@@ -440,12 +450,20 @@ export function mountPlan(canvas) {
       if (!current) return;
       moveRamp(drag.id, edge ? edge.edge : current.edge, edge ? edge.t : projectAlong(current.edge, world));
     }
+    if (drag.mode === "lowerRamp") {
+      const hit = pickEdge(world, state.plate) || { edge: drag.edge, t: projectAlong(drag.edge, world) };
+      moveLowerRamp(drag.groundId, hit.edge || drag.edge, hit.t, { live: true });
+    }
   });
 
   canvas.addEventListener("pointerup", () => {
     if (drag?.mode === "rampFree") {
       const cur = state.ramps.find((item) => item.id === drag.id);
       if (cur) moveRampFree(drag.id, cur.x, cur.y, { live: false });
+    }
+    if (drag?.mode === "lowerRamp" && drag.groundId != null) {
+      const ov = state.lowerRampOverrides?.[drag.groundId];
+      if (ov) moveLowerRamp(drag.groundId, ov.edge || drag.edge, ov.t, { live: false });
     }
     if (drag?.mode === "plateVertex" && state.parkPolygon?.length >= 3) {
       setParkPolygon(state.parkPolygon);
@@ -687,6 +705,22 @@ function hitRamp(point) {
 
 function hitRampDetail(point) {
   if (!state.plate) return null;
+  // 층간 램프(초록 점선) 먼저 — 출입과 독립 선택
+  const lowerMode = state.lowerRampMode || "alternate";
+  const lowers = rampsForLevel(state.ramps, state.plate, 1, lowerMode, state.lowerRampOverrides);
+  for (const ramp of lowers) {
+    const shape = rampShape(ramp, state.plate);
+    const box = shape.footprint || rampFootprint(ramp, state.plate);
+    if (box && hit(point, box)) {
+      return {
+        id: ramp.id,
+        ramp,
+        module: null,
+        lower: true,
+        groundId: ramp.groundId ?? (Number(ramp.id) - 1000),
+      };
+    }
+  }
   for (const ramp of state.ramps) {
     if (ramp.modules?.length) {
       const chain = buildChain(ramp);

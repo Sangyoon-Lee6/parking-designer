@@ -1,12 +1,14 @@
 import { assignStallTypes, tallyStallTypes, stallRuleTargets } from "./stallTypes.js?v=282";
 import {
+  externalBend9090Shape,
   externalCurve90Shape,
+  externalUTurn180Shape,
   lowerFloorRamp,
   occupancyRamps,
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=284";
+} from "./rampForms.js?v=285";
 import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=284";
 import {
   analyzeOnPlate,
@@ -29,7 +31,9 @@ export {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=284";
+  externalBend9090Shape,
+  externalUTurn180Shape,
+} from "./rampForms.js?v=285";
 export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=284";
 
 /** 모듈 사슬 램프의 평면 분석(legacy 동등이면 null). */
@@ -448,22 +452,18 @@ export function rampShape(ramp, plate) {
 }
 function rampShapeRaw(ramp, plate) {
   const form = rampFormOf(ramp, plate && plate.rampForm);
-  if (form === "spiral") {
+  // 외부형 «외곽 회전»은 아래 90·직선·90 / 180 진입으로 처리(주차선 밖에서 돌아 들어옴).
+  if (form === "spiral" && (ramp.placement || "internal") !== "external") {
     const spiral = spiralRampShape(ramp, plate);
-    // 외부·이격 안 외곽 회전은 대지 여유까지 허용. 내부형은 평면 안만.
-    const m = siteMarginsOf(plate);
-    const allowOut = spiral.external || (ramp.placement || "internal") === "external";
-    const minX = allowOut ? -m.w - 0.05 : -0.05;
-    const minY = allowOut ? -m.s - 0.05 : -0.05;
-    const maxX = allowOut ? plate.width + m.e + 0.05 : plate.width + 0.05;
-    const maxY = allowOut ? plate.depth + m.n + 0.05 : plate.depth + 0.05;
+    // 내부 외곽 회전: 평면 안 가장자리만
     const pathOut = (spiral.path || []).some((pt) => (
-      pt.x < minX || pt.y < minY || pt.x > maxX || pt.y > maxY
+      pt.x < -0.05 || pt.y < -0.05
+      || pt.x > plate.width + 0.05 || pt.y > plate.depth + 0.05
     ));
     const piecesOut = (spiral.pieces || []).some((box) => (
-      box.x < minX - 0.55 || box.y < minY - 0.55
-      || box.x + box.w > maxX + 0.55
-      || box.y + box.d > maxY + 0.55
+      box.x < -0.6 || box.y < -0.6
+      || box.x + box.w > plate.width + 0.6
+      || box.y + box.d > plate.depth + 0.6
     ));
     const outside = pathOut || piecesOut;
     if (spiral.ok && !outside) return spiral;
@@ -504,11 +504,19 @@ function rampShapeRaw(ramp, plate) {
   };
 
   const external = (ramp.placement || "internal") === "external";
-  // 외부형 + 90° 곡선: 대지 밖에서 회전해 들어옴.
-  if (external && form === "curve90") {
-    return externalCurve90Shape(ramp, plate, {
-      localFrame, arcSectors, straightDrop, straightSegments, rectPoly,
-    });
+  const helpers = { localFrame, arcSectors, straightDrop, straightSegments, rectPoly };
+  // 외부형 진입: 90° / 90·직선·90 / 180° / (예전 외곽 회전→90·직선·90)
+  if (external && (form === "curve90" || form === "outer9090" || form === "outer180" || form === "spiral")) {
+    if (form === "outer180") return externalUTurn180Shape(ramp, plate, helpers);
+    if (form === "outer9090" || form === "spiral") {
+      const bend = externalBend9090Shape(ramp, plate, helpers);
+      if (bend.ok) return bend;
+      // 이격이 모자라면 180° 또는 단일 90°로 대체
+      const u = externalUTurn180Shape(ramp, plate, helpers);
+      if (u.ok) return { ...u, reason: bend.reason || u.reason, fallbackFrom: form };
+      return { ...externalCurve90Shape(ramp, plate, helpers), fallbackFrom: form };
+    }
+    return externalCurve90Shape(ramp, plate, helpers);
   }
   if (external) {
     const L = ramp.length;

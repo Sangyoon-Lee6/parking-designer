@@ -19,7 +19,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=284";
+} from "./layout.js?v=285";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -86,7 +86,9 @@ export const state = {
   rampForm: "auto",
   lowerRampForm: "auto",
   lowerRampMode: "alternate",
-  entranceMode: "separate",
+  /** 층간 램프 위치 덮어쓰기 { [groundId]: { edge, t, x?, y? } } */
+  lowerRampOverrides: {},
+  entranceMode: "integrated",
   circulation: "ccw",
   entranceWidth: 6,
   rampWidth: 6,
@@ -181,6 +183,7 @@ export function plateFromState() {
     rampForm: state.rampForm || "auto",
     lowerRampForm: state.lowerRampForm || "auto",
     lowerRampMode: state.lowerRampMode || "alternate",
+    lowerRampOverrides: { ...(state.lowerRampOverrides || {}) },
     legalStalls: rules.legalStalls,
     stallRules: rules,
   };
@@ -279,6 +282,7 @@ export function syncPlateMeta() {
     rampForm: state.rampForm || "auto",
     lowerRampForm: state.lowerRampForm || "auto",
     lowerRampMode: state.lowerRampMode || "alternate",
+    lowerRampOverrides: { ...(state.lowerRampOverrides || {}) },
     roadEdge: state.roadEdge || "w",
     rampPos: state.rampPos || "auto",
   };
@@ -711,21 +715,13 @@ export function setStep(step) {
 }
 
 export function readyFor3d() {
-  const columnBlocked = state.issues.some((issue) => issue.type === "column")
-    || (state.metrics && state.metrics.columnHits > 0);
-  // 내부·일체형 램프는 openings가 비어도 램프 자체가 출입. metrics.valid(겹침·경사 등)와
-  // 동선 연결(metrics.connected)을 구분해, 대지만 살짝 넘친 경우에도 모델을 볼 수 있게 한다.
+  // 동선·램프 경고가 있어도 평면·칸·램프만 있으면 3D를 볼 수 있게 한다(경고는 UI에 남김).
   const hasAccess = (state.openings && state.openings.length > 0) || (state.ramps && state.ramps.length > 0);
-  const networkOk = state.metrics
-    ? state.metrics.connected !== false
-    : Boolean(state.connected);
   return Boolean(
     state.plate
     && state.cores.length
     && hasAccess
     && state.ramps.length
-    && networkOk
-    && !columnBlocked
     && (state.stalls?.length > 0),
   );
 }
@@ -1103,6 +1099,28 @@ export function moveRamp(id, edge, t) {
   state.selection = { type: "ramp", id };
   rebuildLayout();
   emit();
+}
+
+/** 층간 램프(B2↓) 위치 덮어쓰기 — 출입과 독립 조정. */
+export function moveLowerRamp(groundId, edge, t, { live = false } = {}) {
+  if (!state.plate) return;
+  const along = edge === "n" || edge === "s" ? state.plate.width : state.plate.depth;
+  const nextT = Math.max(3, Math.min(along - 3, Number(t) || along / 2));
+  state.lowerRampOverrides = {
+    ...(state.lowerRampOverrides || {}),
+    [groundId]: {
+      ...(state.lowerRampOverrides?.[groundId] || {}),
+      edge,
+      t: round1(nextT),
+    },
+  };
+  state.selection = { type: "lowerRamp", id: groundId };
+  syncPlateMeta();
+  if (live) emit();
+  else {
+    rebuildLayout();
+    emit();
+  }
 }
 
 /** 사슬 시작점 평행 이동(0.5m 맞춤). live면 배치 엔진은 돌리지 않고 화면만 갱신.
