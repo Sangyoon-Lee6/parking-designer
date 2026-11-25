@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=288";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=289";
 import { analyzeOnPlate, rampMesh, slopePlan } from "./rampModules.js?v=282";
-import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=288";
+import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=289";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -51,26 +51,36 @@ export function mountScene(container) {
   new ResizeObserver(resize).observe(container);
   resize();
 
+  const sceneView = () => document.getElementById("scene-view");
+  const sceneVisible = () => {
+    const view = sceneView();
+    return Boolean(view && !view.hidden && state.step === 3 && state.resultTab === "model");
+  };
+
   subscribe(() => {
-    if (state.step !== 3) return;
+    if (state.step !== 3 || state.resultTab !== "model") return;
     requestAnimationFrame(() => {
       resize();
-      try {
-        rebuild(sun);
-      } catch (err) {
-        console.error("3D rebuild failed", err);
-        const box = document.getElementById("step2-error");
-        if (box) {
-          box.hidden = false;
-          box.textContent = `3D 모델 생성 오류: ${err && err.message ? err.message : err}`;
+      // hidden이었다가 열리면 한 프레임 더 기다려 크기 확정
+      requestAnimationFrame(() => {
+        resize();
+        try {
+          rebuild(sun);
+        } catch (err) {
+          console.error("3D rebuild failed", err);
+          const box = document.getElementById("step2-error");
+          if (box) {
+            box.hidden = false;
+            box.textContent = `3D 모델 생성 오류: ${err && err.message ? err.message : err}`;
+          }
         }
-      }
+      });
     });
   });
 
   const loop = () => {
     frame = requestAnimationFrame(loop);
-    if (!container.hidden && state.step === 3) {
+    if (sceneVisible()) {
       controls.update();
       renderer.render(scene, camera);
     }
@@ -79,7 +89,10 @@ export function mountScene(container) {
 
   document.getElementById("reset-camera").addEventListener("click", () => {
     signature = "";
-    if (state.step === 3) rebuild(sun);
+    resize();
+    if (state.step === 3) {
+      try { rebuild(sun); } catch (err) { console.error("3D rebuild failed", err); }
+    }
   });
 }
 

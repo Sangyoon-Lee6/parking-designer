@@ -1,13 +1,13 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=288";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=289";
 import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=282";
-import { drawThumb, mountPlan } from "./plan.js?v=288";
+import { drawThumb, mountPlan } from "./plan.js?v=289";
 import { stallRuleTargets } from "./stallTypes.js?v=282";
 import {
   plateDimsFromPolygon, presetChamferRect, presetL, presetTrapezoid, presetU,
   rectPolygon, validatePolygon, normalizePolygon, offsetPolygon, polygonArea, edgeLengths,
 } from "./polygon.js?v=282";
 import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=282";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, pinLowerRampOverrides, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=288";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, pinLowerRampOverrides, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=289";
 
 // 시트·DXF·주변지도는 클릭 시에만 불러 초기 로딩을 줄인다.
 let sheetMod = null;
@@ -874,7 +874,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=288")
+    sceneMount = import("./scene.js?v=289")
       .then((module) => module.mountScene($("scene-root")))
       .catch((error) => {
         sceneMount = null;
@@ -890,7 +890,7 @@ async function open3d() {
     $("step2-error").hidden = false;
     $("step2-error").textContent = errors.length
       ? `3D를 만들 수 없습니다: ${errors.join(" / ")}`
-      : "3D를 만들 수 없습니다. 램프·코어·동선을 확인하세요.";
+      : "3D를 만들 수 없습니다. 평면에서 주차 생성을 먼저 하세요(추천→결과).";
     return;
   }
   try {
@@ -906,7 +906,23 @@ async function open3d() {
         slide.classList.toggle("on", on);
       });
     }
+    // 뷰를 먼저 보이게 한 뒤 리사이즈·재빌드 (hidden 상태에서 0×0 캔버스 방지)
+    $("scene-view").hidden = false;
+    $("plan-view").hidden = true;
+    $("sheet-view").hidden = true;
+    document.body.classList.add("step-result");
     emit();
+    requestAnimationFrame(() => {
+      const root = $("scene-root");
+      if (root) {
+        // ResizeObserver가 크기 갱신하도록 레이아웃 강제
+        root.style.width = "100%";
+        root.style.height = "100%";
+        window.dispatchEvent(new Event("resize"));
+      }
+      const btn = $("reset-camera");
+      if (btn) btn.click();
+    });
   } catch (error) {
     state.resultTab = "plan";
     $("step2-error").hidden = false;
@@ -1294,27 +1310,33 @@ function render() {
   renderCompare();
   renderCorePick();
 
-  // 불가능한 배치 → 빨간 상자에 원인(3D 막힘), 가능하지만 알릴 것 → 노란 상자(3D 가능)
+  // 평면·칸·램프만 있으면 3D 가능. 동선·대지 문제는 경고로만 표시.
   // 5·6은 주차 생성 전 셸이라 이슈를 숨긴다(6→7에서 생성 후 표시).
   const { errors, warnings } = issueGroups();
   const listHtml = (items) => `<ul>${items.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>`;
   const hasParking = Boolean(state.stalls && state.stalls.length);
   const showIssues = wizardSlide >= 7 && wizardSlide <= 8 && state.plate && hasParking;
-  $("step2-error").hidden = !showIssues || errors.length === 0;
-  $("step2-error").innerHTML = errors.length ? `<strong>3D를 만들 수 없습니다 — 원인</strong>${listHtml(errors)}` : "";
-  $("step2-warn").hidden = !showIssues || warnings.length === 0;
-  $("step2-warn").innerHTML = warnings.length ? `<strong>주의 (3D는 만들 수 있음)</strong>${listHtml(warnings)}` : "";
-  // 평면 위 알림은 생성 전(5·6)에는 비움
+  const ready = readyFor3d();
+  // ready면 빨간「3D 불가」를 쓰지 않음 — 경고로만
+  const hardBlock = !ready && errors.length > 0;
+  $("step2-error").hidden = !showIssues || !hardBlock;
+  $("step2-error").innerHTML = hardBlock ? `<strong>3D를 만들 수 없습니다 — 원인</strong>${listHtml(errors)}` : "";
+  const warnItems = hardBlock ? warnings : errors.concat(warnings);
+  $("step2-warn").hidden = !showIssues || warnItems.length === 0;
+  $("step2-warn").innerHTML = warnItems.length
+    ? `<strong>${ready ? "주의 (3D 보기는 가능)" : "주의"}</strong>${listHtml(warnItems)}`
+    : "";
   const alert = $("plan-alert");
   const boxes = [];
-  if (showIssues && errors.length) boxes.push(`<div class="issue-box error"><strong>3D 불가 — 원인</strong>${listHtml(errors)}</div>`);
-  if (showIssues && warnings.length) boxes.push(`<div class="issue-box warn"><strong>주의</strong>${listHtml(warnings)}</div>`);
+  if (showIssues && hardBlock) boxes.push(`<div class="issue-box error"><strong>3D 불가 — 원인</strong>${listHtml(errors)}</div>`);
+  if (showIssues && warnItems.length) boxes.push(`<div class="issue-box warn"><strong>주의</strong>${listHtml(warnItems)}</div>`);
   alert.hidden = boxes.length === 0;
   alert.innerHTML = boxes.join("");
-  const ready = readyFor3d();
   if ($("to-3d")) {
     $("to-3d").disabled = !ready;
-    $("to-3d").title = ready ? "이 배치로 3D 모델을 만듭니다." : `3D 불가: ${errors.join(" / ")}`;
+    $("to-3d").title = ready
+      ? "이 배치로 3D 모델을 만듭니다."
+      : `3D 불가: ${(errors.length ? errors : ["평면·주차칸·램프·코어를 확인하세요."]).join(" / ")}`;
   }
   $("show-conflicts").classList.toggle("on", state.debugColumns);
 

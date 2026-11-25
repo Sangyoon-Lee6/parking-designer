@@ -20,7 +20,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=288";
+} from "./layout.js?v=289";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -296,7 +296,15 @@ export function issueGroups() {
   let hasNetworkIssue = false;
   for (const issue of state.issues || []) {
     const label = issue.label || issue.message || String(issue.type || issue);
-    if (issue.type === "notice" || issue.type === "warn" || issue.type === "roadless") {
+    // 대지·겹침·안내: 3D 보기는 가능 — 경고로만 표시
+    if (
+      issue.type === "notice"
+      || issue.type === "warn"
+      || issue.type === "roadless"
+      || issue.type === "site"
+      || issue.type === "overlap"
+      || issue.type === "slope"
+    ) {
       warnings.push(label);
       continue;
     }
@@ -306,11 +314,11 @@ export function issueGroups() {
   }
   // metrics.columnHits는 이미 type:"column" 이슈로 들어가므로 중복 문구를 넣지 않는다.
   if (!hasColumnIssue && state.metrics && state.metrics.columnHits > 0) {
-    errors.push(`기둥이 주차칸과 ${state.metrics.columnHits}곳 겹칩니다.`);
+    warnings.push(`기둥이 주차칸과 ${state.metrics.columnHits}곳 겹칩니다.`);
   }
-  // state.connected는 metrics.valid(대지 밖 포함)라서, 실제 차로 끊김일 때만 동선 문구를 붙인다.
+  // 동선 끊김은 3D 보기를 막지 않고 경고로 둔다(readyFor3d는 칸·램프·코어만 본다).
   if (hasNetworkIssue || (state.metrics && state.metrics.connected === false)) {
-    errors.push("차로가 하나로 이어지지 않거나 배치가 유효하지 않습니다.");
+    warnings.push("차로가 하나로 이어지지 않거나 배치에 주의가 필요합니다.");
   }
   return { errors, warnings };
 }
