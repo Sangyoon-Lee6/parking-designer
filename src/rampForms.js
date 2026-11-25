@@ -652,6 +652,13 @@ export function externalCurve90Shape(ramp, plate, helpers) {
     .concat([{ name: "외부 곡선 90°", length: round1(arc), drop: round3(dropArcMax * ease), slope: round3(RAMP_SLOPE_CURVE * ease) }]);
   if (sInMain > 0) segments.push({ name: "진입 직선", length: sInMain, drop: round3(rest), slope: round3(rest / sInMain) });
 
+  // 출입: 건축선 입구(도로→램프) + 안쪽 90° 출구(차로 연결). 도로 쪽은 exterior.
+  const wallLip = toLocal.rect({ u0: ramp.t - W / 2, u1: ramp.t + W / 2, v0: 0, v1: 1.2 });
+  const mouthIn = { u: ramp.t, lip: wallLip, role: "in", exterior: true };
+  // 출구 중심 = 진입 직선 중점 (uc → uc+sgn·sIn)
+  const mouthOut = sIn > 0
+    ? { u: uc + sgn * (sIn / 2), lip: pieces[pieces.length - 1], role: "out" }
+    : null;
   return {
     kind: "curved",
     ok: !reason,
@@ -662,9 +669,12 @@ export function externalCurve90Shape(ramp, plate, helpers) {
     segments,
     total: round1(sOut + arc + sIn),
     approach: sIn > 0 ? pieces[pieces.length - 1] : null,
-    lip: null,
+    lip: wallLip,
+    mouths: mouthOut ? [mouthIn, mouthOut] : [mouthIn],
     turn: sgn,
     externalCurve: true,
+    outerKind: "curve90",
+    outsideReach: round1(needMargin),
     footprint: pieces[0],
   };
 }
@@ -764,9 +774,15 @@ export function externalBend9090Shape(ramp, plate, helpers) {
     total: round1(sAcc),
     approach: pieces[pieces.length - 1],
     lip: pieces[0],
+    // 입·출구 두 곳 — 차로 동선이 각각 붙어야 함
+    mouths: [
+      { u: mouthA, lip: pieces[0], role: "in" },
+      { u: mouthB, lip: pieces[pieces.length - 1], role: "out" },
+    ],
     turn: 1,
     externalCurve: true,
     outerKind: "outer9090",
+    outsideReach: round1(Ro),
     footprint: {
       x: round3(Math.min(...xs) - pad),
       y: round3(Math.min(...ys) - pad),
@@ -864,9 +880,14 @@ export function externalUTurn180Shape(ramp, plate, helpers) {
     total: round1(sAcc),
     approach: pieces[2],
     lip: pieces[0],
+    mouths: [
+      { u: mouthA, lip: pieces[0], role: "in" },
+      { u: mouthB, lip: pieces[2], role: "out" },
+    ],
     turn: 1,
     externalCurve: true,
     outerKind: "outer180",
+    outsideReach: round1(Ro),
     footprint: {
       x: round3(Math.min(...xs) - pad),
       y: round3(Math.min(...ys) - pad),
