@@ -293,7 +293,7 @@ body:not(.plan-expanded):not(.step-result) #plan-view {
 #status { flex: 1; min-width: 0; color: var(--muted); }
 #readout { font-variant-numeric: tabular-nums; color: var(--ink); }
 
-#plan, #scene-root, #scene-root canvas {
+#plan {
   width: 100%;
   height: 100%;
   display: block;
@@ -306,10 +306,19 @@ body:not(.plan-expanded):not(.step-result) #plan-view {
   flex-direction: column;
 }
 #scene-root {
-  background: #e2e8f0;
-  flex: 1;
-  min-height: 0;
+  background: #ddd6cb; /* three.js 배경과 동일 — 캔버스 전에도 빈 회색으로 오해되지 않게 */
+  flex: 1 1 auto;
+  min-height: 320px;
+  height: 100%;
   position: relative;
+  overflow: hidden;
+}
+#scene-root canvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
 }
 
 .legend {

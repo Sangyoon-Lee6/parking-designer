@@ -37,10 +37,10 @@
     window.addEventListener("unhandledrejection", (e) => log("REJECT: " + (e.reason && e.reason.message ? e.reason.message : e.reason)));
 
     try {
-      const { mountScene } = await import("../src/scene.js?v=291");
+      const { mountScene } = await import("../src/scene.js?v=292");
       const {
         state, emit, generatePlate, recommendLayouts, applyVariant, readyFor3d, summary,
-      } = await import("../src/state.js?v=291");
+      } = await import("../src/state.js?v=292");
 
       state.parkWidth = 48;
       state.parkDepth = 42;

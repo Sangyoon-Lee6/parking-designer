@@ -8,7 +8,7 @@ import {
   rampFormOf,
   rampsForLevel,
   spiralRampShape,
-} from "./rampForms.js?v=291";
+} from "./rampForms.js?v=292";
 import { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=284";
 import {
   analyzeOnPlate,
@@ -33,7 +33,7 @@ export {
   spiralRampShape,
   externalBend9090Shape,
   externalUTurn180Shape,
-} from "./rampForms.js?v=291";
+} from "./rampForms.js?v=292";
 export { layoutComplex, layoutLoopFirst } from "./complexLayout.js?v=284";
 
 /** 모듈 사슬 램프의 평면 분석(legacy 동등이면 null). */

@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=291";
+import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=292";
 import { analyzeOnPlate, rampMesh, slopePlan } from "./rampModules.js?v=282";
-import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=291";
+import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=292";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -43,44 +43,33 @@ export function mountScene(container) {
   scene.add(building);
 
   let lastSizeOk = false;
-  const resize = () => {
-    const rect = container.getBoundingClientRect();
-    const w = Math.max(1, rect.width);
-    const h = Math.max(1, rect.height);
-    const ok = rect.width > 2 && rect.height > 2;
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    renderer.setSize(w, h, false);
-    lastSizeOk = ok;
-    return ok;
-  };
-  new ResizeObserver(() => {
-    const wasOk = lastSizeOk;
-    const ok = resize();
-    // 0×0 → 실제 크기로 바뀌면 카메라를 다시 잡는다
-    if (ok && !wasOk && state.resultTab === "model") {
-      signature = "";
-      tryBuild(0);
-    }
-  }).observe(container);
-  resize();
-
-  const sceneView = () => document.getElementById("scene-view");
-  const sceneVisible = () => {
-    const view = sceneView();
-    return Boolean(view && !view.hidden && state.resultTab === "model");
-  };
-
   const paintOnce = () => {
     if (!renderer || !scene || !camera) return;
     controls.update();
     renderer.render(scene, camera);
   };
-
+  const resize = () => {
+    const rect = container.getBoundingClientRect();
+    // flex 자식이 잠시 0이면 부모 scene-view 크기로 폴백
+    const parent = container.parentElement;
+    const pref = parent && parent.getBoundingClientRect();
+    const w = Math.max(rect.width, pref?.width || 0, 2);
+    const h = Math.max(rect.height, pref?.height || 0, 2);
+    const ok = w > 4 && h > 4;
+    camera.aspect = w / Math.max(h, 1);
+    camera.updateProjectionMatrix();
+    // updateStyle=true: CSS 픽셀 크기도 맞춰 0×0 표시를 막는다
+    renderer.setSize(w, h, true);
+    renderer.domElement.style.width = `${w}px`;
+    renderer.domElement.style.height = `${h}px`;
+    renderer.domElement.style.display = "block";
+    lastSizeOk = ok;
+    return ok;
+  };
   const tryBuild = (attempt = 0) => {
     if (state.resultTab !== "model") return;
     const ok = resize();
-    if (!ok && attempt < 12) {
+    if (!ok && attempt < 20) {
       requestAnimationFrame(() => tryBuild(attempt + 1));
       return;
     }
@@ -90,12 +79,34 @@ export function mountScene(container) {
     } catch (err) {
       signature = ""; // 실패 시 재시도 가능하게
       console.error("3D rebuild failed", err);
+      paintOnce();
       const box = document.getElementById("step2-error");
       if (box) {
         box.hidden = false;
         box.textContent = `3D 모델 생성 오류: ${err && err.message ? err.message : err}`;
       }
     }
+  };
+  new ResizeObserver(() => {
+    const wasOk = lastSizeOk;
+    const ok = resize();
+    // 0×0 → 실제 크기로 바뀌면 카메라를 다시 잡는다
+    if (ok && !wasOk && state.resultTab === "model") {
+      signature = "";
+      tryBuild(0);
+    } else if (ok) {
+      paintOnce();
+    }
+  }).observe(container);
+  resize();
+  // 마운트 직후 빈 씬이라도 배경색이 보이게 한 프레임 그림 (회색 scene-root만 보이는 상태 방지)
+  renderer.setClearColor(0xddd6cb, 1);
+  paintOnce();
+
+  const sceneView = () => document.getElementById("scene-view");
+  const sceneVisible = () => {
+    const view = sceneView();
+    return Boolean(view && !view.hidden && state.resultTab === "model");
   };
 
   subscribe(() => {
@@ -113,13 +124,25 @@ export function mountScene(container) {
   };
   loop();
 
-  document.getElementById("reset-camera").addEventListener("click", () => {
-    signature = "";
-    tryBuild(0);
-  });
+  const resetBtn = document.getElementById("reset-camera");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      signature = "";
+      tryBuild(0);
+    });
+  }
 
   // open3d에서 강제 재빌드할 때 사용
-  return { forceRebuild: () => { signature = ""; tryBuild(0); }, resize };
+  return {
+    forceRebuild: () => { signature = ""; tryBuild(0); },
+    resize,
+    hasCanvas: () => Boolean(renderer?.domElement?.parentElement),
+    canvasSize: () => {
+      const el = renderer?.domElement;
+      if (!el) return { w: 0, h: 0 };
+      return { w: el.width || 0, h: el.height || 0 };
+    },
+  };
 }
 
 const paint = makePaint();
@@ -174,36 +197,45 @@ function rebuild(sun) {
     const floor = new THREE.Group();
     building.add(floor);
     host = floor;
-    addSlab(plate, base, concrete);
-    addAisles(base, aisleMat);
-    addStallPads(base, stallMats);
-    host.add(stallLines(base, lineMat));
-    addArrows(base);
-    state.columns.forEach((column, index) => addColumn(column, index, base, columnMat, hazard));
-    addClearance(base);
-    state.cores.forEach((core) => addCore(core, coreMat, base));
-    // B1(level 0): 지상→지하 진입 램프. B2+(level≥1): 층간 다른 경로(기본 alternate).
-    const levelRamps = rampsForLevel(
-      state.ramps,
-      plate,
-      level,
-      state.lowerRampMode || (plate && plate.lowerRampMode) || "alternate",
-      state.lowerRampOverrides,
-    );
-    levelRamps.forEach((ramp) => {
-      if (ramp.modules?.length && !isLegacyEquivalent(ramp, plate)) {
-        addModuleRamp(ramp, rampMat, base, hazard, level);
-      } else {
-        addRamp(ramp, rampMat, base, hazard);
-      }
-    });
-    addSiteSetback(base);
-    addWalls(concrete, base);
-    addGates(base);
-    state.openings.forEach((opening) => {
-      addThreshold(opening, opening.kind === "in" ? inMat : outMat, base);
-    });
-    addLabel(`B${level + 1}`, plate.width / 2, base + 1.2, -2.2, 6.4);
+    try {
+      addSlab(plate, base, concrete);
+      addAisles(base, aisleMat);
+      addStallPads(base, stallMats);
+      host.add(stallLines(base, lineMat));
+      addArrows(base);
+      state.columns.forEach((column, index) => addColumn(column, index, base, columnMat, hazard));
+      addClearance(base);
+      state.cores.forEach((core) => addCore(core, coreMat, base));
+      // B1(level 0): 지상→지하 진입 램프. B2+(level≥1): 층간 다른 경로(기본 alternate).
+      const levelRamps = rampsForLevel(
+        state.ramps,
+        plate,
+        level,
+        state.lowerRampMode || (plate && plate.lowerRampMode) || "alternate",
+        state.lowerRampOverrides,
+      );
+      levelRamps.forEach((ramp) => {
+        try {
+          if (ramp.modules?.length && !isLegacyEquivalent(ramp, plate)) {
+            addModuleRamp(ramp, rampMat, base, hazard, level);
+          } else {
+            addRamp(ramp, rampMat, base, hazard);
+          }
+        } catch (rampErr) {
+          console.warn("3D ramp skip", level, rampErr);
+        }
+      });
+      addSiteSetback(base);
+      addWalls(concrete, base);
+      addGates(base);
+      state.openings.forEach((opening) => {
+        addThreshold(opening, opening.kind === "in" ? inMat : outMat, base);
+      });
+      addLabel(`B${level + 1}`, plate.width / 2, base + 1.2, -2.2, 6.4);
+    } catch (levelErr) {
+      console.warn("3D floor skip", level, levelErr);
+      addLabel(`B${level + 1}?`, plate.width / 2, base + 1.2, -2.2, 6.4);
+    }
   });
 
   host = building;
@@ -244,6 +276,12 @@ function rebuild(sun) {
   sun.shadow.camera.near = 0.5;
   sun.shadow.camera.far = span * 4;
   sun.shadow.camera.updateProjectionMatrix();
+
+  // 대형 평면·다층에서 기본 far=800이면 모델이 잘려 빈 화면처럼 보인다
+  const camFar = Math.max(800, span * 8, 2000);
+  camera.near = 0.5;
+  camera.far = camFar;
+  camera.updateProjectionMatrix();
 
   if (!keepCamera) {
     const center = new THREE.Vector3(plate.width / 2, single ? 1.2 : -((drawn - 1) * FLOOR_H) / 2, plate.depth / 2);
@@ -314,7 +352,18 @@ function addSlab(plate, base, material) {
     path.lineTo(hole.x, hole.y);
     shape.holes.push(path);
   });
-  const geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.28, bevelEnabled: false });
+  let geometry;
+  try {
+    geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.28, bevelEnabled: false });
+  } catch (e) {
+    // hole 퇴화 등으로 Extrude 실패 시 단순 박스 슬래브
+    geometry = new THREE.BoxGeometry(plate.width, 0.28, plate.depth);
+    const slab = new THREE.Mesh(geometry, material);
+    slab.position.set(plate.width / 2, base - 0.14, plate.depth / 2);
+    slab.receiveShadow = true;
+    host.add(slab);
+    return;
+  }
   geometry.rotateX(Math.PI / 2);
   const slab = new THREE.Mesh(geometry, material);
   slab.position.set(0, base, 0);

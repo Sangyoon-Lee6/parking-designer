@@ -1,13 +1,13 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=291";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=292";
 import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=282";
-import { drawThumb, mountPlan } from "./plan.js?v=291";
+import { drawThumb, mountPlan } from "./plan.js?v=292";
 import { stallRuleTargets } from "./stallTypes.js?v=282";
 import {
   plateDimsFromPolygon, presetChamferRect, presetL, presetTrapezoid, presetU,
   rectPolygon, validatePolygon, normalizePolygon, offsetPolygon, polygonArea, edgeLengths,
 } from "./polygon.js?v=282";
 import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=282";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, pinLowerRampOverrides, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=291";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, pinLowerRampOverrides, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=292";
 
 // 시트·DXF·주변지도는 클릭 시에만 불러 초기 로딩을 줄인다.
 let sheetMod = null;
@@ -883,9 +883,11 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=291")
+    sceneMount = import("./scene.js?v=292")
       .then((module) => {
-        sceneApi = module.mountScene($("scene-root"));
+        const root = $("scene-root");
+        if (!root) throw new Error("scene-root 없음");
+        sceneApi = module.mountScene(root);
         return sceneApi;
       })
       .catch((error) => {
@@ -897,6 +899,17 @@ async function ensureScene() {
   return sceneMount;
 }
 
+function waitFrames(n = 1) {
+  return new Promise((resolve) => {
+    const step = () => {
+      n -= 1;
+      if (n <= 0) resolve();
+      else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
 async function open3d() {
   if (!readyFor3d()) {
     const { errors } = issueGroups();
@@ -906,9 +919,28 @@ async function open3d() {
       : "3D를 만들 수 없습니다. 평면에서 주차 생성을 먼저 하세요(추천→결과).";
     return;
   }
+  // 이미 캔버스가 있으면 가볍게 리사이즈·재빌드만 (busy 오버레이 반복 방지)
+  const existing = sceneApi?.canvasSize?.() || { w: 0, h: 0 };
+  if (state.resultTab === "model" && sceneApi?.hasCanvas?.() && existing.w > 10 && existing.h > 10) {
+    $("scene-view").hidden = false;
+    $("plan-view").hidden = true;
+    $("sheet-view").hidden = true;
+    document.body.classList.add("step-result");
+    sceneApi.resize?.();
+    sceneApi.forceRebuild?.();
+    emit();
+    return;
+  }
+  const overlay = $("busy");
+  const busyText = $("busy-text");
   try {
     state.resultTab = "model";
     state.step = 3;
+    // 다층 「전체」는 첫 페인트가 오래 걸려 회색만 보이므로, 5층 이상은 B1부터
+    const floors = summary().floors || 1;
+    if (floors > 4 && state.floorView === "all") {
+      state.floorView = 0;
+    }
     if (wizardSlide !== 8) {
       wizardSlide = 8;
       document.body.dataset.wizard = "8";
@@ -925,21 +957,50 @@ async function open3d() {
     document.body.classList.add("step-result");
     const root = $("scene-root");
     if (root) {
+      root.style.flex = "1 1 auto";
       root.style.width = "100%";
+      root.style.minHeight = "320px";
       root.style.height = "100%";
+      root.style.position = "relative";
     }
-    // 한 프레임 기다려 레이아웃이 잡힌 뒤 Three를 붙인다
-    await new Promise((r) => requestAnimationFrame(r));
+    if (overlay && busyText) {
+      busyText.textContent = "3D 모델 준비 중…";
+      overlay.hidden = false;
+      document.body.classList.add("is-busy");
+    }
+    // 레이아웃(절대 inset + flex)이 잡힐 때까지 몇 프레임 대기
+    await waitFrames(2);
     await ensureScene();
+    // 캔버스가 없으면 재마운트
+    if (!sceneApi?.hasCanvas?.()) {
+      sceneMount = null;
+      sceneApi = null;
+      await ensureScene();
+    }
     emit();
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await waitFrames(2);
+    sceneApi?.resize?.();
     if (sceneApi?.forceRebuild) sceneApi.forceRebuild();
     else $("reset-camera")?.click();
+    await waitFrames(2);
+    const size = sceneApi?.canvasSize?.() || { w: 0, h: 0 };
+    if (!(size.w > 10 && size.h > 10)) {
+      // 최종 폴백: 강제 재마운트
+      sceneMount = null;
+      sceneApi = null;
+      if (root) root.innerHTML = "";
+      await ensureScene();
+      sceneApi?.forceRebuild?.();
+      await waitFrames(2);
+    }
   } catch (error) {
     state.resultTab = "plan";
     $("step2-error").hidden = false;
     $("step2-error").textContent = `3D 모델을 불러오지 못했습니다: ${error && error.message ? error.message : error}`;
     emit();
+  } finally {
+    if (overlay) overlay.hidden = true;
+    document.body.classList.remove("is-busy");
   }
 }
 
