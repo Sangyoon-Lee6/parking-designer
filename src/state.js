@@ -21,7 +21,7 @@ import {
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=293";
+} from "./layout.js?v=294";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -487,15 +487,16 @@ export function optimizeLayout({ refresh = true } = {}) {
   if (refresh) refreshVariants();
 }
 
-/** 셸 단계에서 코어가 램프 점유·동선을 막지 않게 밀어 면에 접게 한다. */
+/** 셸 단계에서 코어가 램프 점유·동선을 막지 않게 밀어, 사면 차로 자리를 남긴다. */
 function clearCoresFromRamps() {
   if (!state.plate || !(state.ramps && state.ramps.length) || !(state.cores && state.cores.length)) return;
-  state.cores = nudgeCoresClearOfRamps(state.cores, state.ramps, state.plate);
+  const buildings = state.siteType === "complex" ? state.buildings : null;
+  state.cores = nudgeCoresClearOfRamps(state.cores, state.ramps, state.plate, buildings);
   if (state.siteType === "complex" && state.buildings.length) {
     const stairs = state.cores.filter((c) => c.kind === "stair");
     const spaced = spaceCoresForTowers(state.cores, state.buildings, state.plate);
     state.cores = spaced.filter((c) => (c.kind || "building") !== "stair").concat(stairs);
-    state.cores = nudgeCoresClearOfRamps(state.cores, state.ramps, state.plate);
+    state.cores = nudgeCoresClearOfRamps(state.cores, state.ramps, state.plate, state.buildings);
     state.plate.blockRects = towerBlockRects(state.buildings, state.cores, state.plate);
   }
   syncCore();
