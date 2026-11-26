@@ -1,8 +1,12 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=294";
+import {
+  CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T,
+  coreInterior, pickCoreDoorSide, rampFootprint, rampShape, rampsForLevel,
+  siteMarginsOf, stairCoreInterior,
+} from "./layout.js?v=295";
 import { analyzeOnPlate, rampMesh, slopePlan } from "./rampModules.js?v=282";
-import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=294";
+import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=295";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -447,27 +451,81 @@ function strip(group, geometry, material, x, y, z, sx, sz) {
 function addCore(core, material, base) {
   const t = WALL_T;
   const h = FLOOR_H - 0.05;
-  const door = 1.1;
-  wallBox(core.x + core.w / 2, base, core.y + core.d - t / 2, core.w, t, material, h);
-  wallBox(core.x + t / 2, base, core.y + core.d / 2, t, core.d, material, h);
-  wallBox(core.x + core.w - t / 2, base, core.y + core.d / 2, t, core.d, material, h);
-  const gap = Math.min(door, core.w * 0.34);
-  const left = (core.w - gap) / 2;
-  if (left > 0.2) {
-    wallBox(core.x + left / 2, base, core.y + t / 2, left, t, material, h);
-    wallBox(core.x + core.w - left / 2, base, core.y + t / 2, left, t, material, h);
+  const doorSide = core.doorSide || pickCoreDoorSide(core, state.aisles, state.plate?.blockRects);
+  const interior = core.interior || ((core.kind === "stair")
+    ? stairCoreInterior(core, doorSide)
+    : coreInterior(core, doorSide));
+  const doorW = interior?.door
+    ? Math.max(interior.door.w, interior.door.d)
+    : Math.min(1.2, Math.min(core.w, core.d) * 0.34);
+
+  // 네 벽 — 출입문 면만 개구
+  const walls = [
+    { side: "n", x: core.x + core.w / 2, z: core.y + core.d - t / 2, sx: core.w, sz: t },
+    { side: "s", x: core.x + core.w / 2, z: core.y + t / 2, sx: core.w, sz: t },
+    { side: "w", x: core.x + t / 2, z: core.y + core.d / 2, sx: t, sz: core.d },
+    { side: "e", x: core.x + core.w - t / 2, z: core.y + core.d / 2, sx: t, sz: core.d },
+  ];
+  walls.forEach((w) => {
+    if (w.side !== doorSide) {
+      wallBox(w.x, base, w.z, w.sx, w.sz, material, h);
+      return;
+    }
+    // 출입문 개구: 좌우(또는 상하) 벽 조각
+    if (doorSide === "n" || doorSide === "s") {
+      const gap = Math.min(doorW, core.w * 0.4);
+      const left = (core.w - gap) / 2;
+      if (left > 0.15) {
+        wallBox(core.x + left / 2, base, w.z, left, t, material, h);
+        wallBox(core.x + core.w - left / 2, base, w.z, left, t, material, h);
+      }
+      const zDoor = doorSide === "s" ? core.y + 0.1 : core.y + core.d - 0.1;
+      const frame = standard("#2b2a28", 0.5);
+      const doorMat = standard("#3d4a43", 0.55);
+      wallBox(core.x + core.w / 2, base, zDoor, gap + 0.16, 0.08, frame, 2.15);
+      wallBox(core.x + core.w / 2 - gap * 0.22, base, zDoor + (doorSide === "s" ? 0.04 : -0.04), gap * 0.42, 0.04, doorMat, 2.05);
+      wallBox(core.x + core.w / 2 + gap * 0.22, base, zDoor + (doorSide === "s" ? 0.04 : -0.04), gap * 0.42, 0.04, doorMat, 2.05);
+    } else {
+      const gap = Math.min(doorW, core.d * 0.4);
+      const low = (core.d - gap) / 2;
+      if (low > 0.15) {
+        wallBox(w.x, base, core.y + low / 2, t, low, material, h);
+        wallBox(w.x, base, core.y + core.d - low / 2, t, low, material, h);
+      }
+      const xDoor = doorSide === "w" ? core.x + 0.1 : core.x + core.w - 0.1;
+      const frame = standard("#2b2a28", 0.5);
+      const doorMat = standard("#3d4a43", 0.55);
+      wallBox(xDoor, base, core.y + core.d / 2, 0.08, gap + 0.16, frame, 2.15);
+      wallBox(xDoor + (doorSide === "w" ? 0.04 : -0.04), base, core.y + core.d / 2 - gap * 0.22, 0.04, gap * 0.42, doorMat, 2.05);
+      wallBox(xDoor + (doorSide === "w" ? 0.04 : -0.04), base, core.y + core.d / 2 + gap * 0.22, 0.04, gap * 0.42, doorMat, 2.05);
+    }
+  });
+
+  const cabin = standard("#1c1c1c", 0.45);
+  const shaft = standard("#4b5563", 0.55);
+  const stairMat = standard("#94a3b8", 0.5);
+  (interior?.elevators || []).forEach((el) => {
+    wallBox(el.x + el.w / 2, base, el.y + el.d / 2, el.w, el.d, shaft, h * 0.98);
+    wallBox(el.x + el.w / 2, base, el.y + el.d / 2, Math.max(0.6, el.w - 0.35), Math.max(0.5, el.d - 0.35), cabin, 2.15);
+    addLabel(el.label || "EL", el.x + el.w / 2, base + h + 0.1, el.y + el.d / 2, 1.8);
+  });
+  if (interior?.stair) {
+    const st = interior.stair;
+    wallBox(st.x + st.w / 2, base, st.y + st.d / 2, st.w, st.d, stairMat, 0.18);
+    const steps = 6;
+    for (let i = 0; i < steps; i += 1) {
+      const t0 = i / steps;
+      const t1 = (i + 1) / steps;
+      if (st.w >= st.d) {
+        wallBox(st.x + st.w * (t0 + t1) / 2, base + 0.12 + i * 0.22, st.y + st.d / 2, st.w / steps - 0.02, st.d * 0.9, stairMat, 0.2);
+      } else {
+        wallBox(st.x + st.w / 2, base + 0.12 + i * 0.22, st.y + st.d * (t0 + t1) / 2, st.w * 0.9, st.d / steps - 0.02, stairMat, 0.2);
+      }
+    }
+    addLabel("계단", st.x + st.w / 2, base + h + 0.1, st.y + st.d / 2, 1.8);
   }
-  const frame = standard("#2b2a28", 0.5);
-  wallBox(core.x + core.w / 2, base, core.y + 0.08, gap + 0.16, 0.08, frame, 2.15);
-  const doorMat = standard("#3d4a43", 0.55);
-  wallBox(core.x + core.w / 2, base, core.y + 0.12, gap * 0.46, 0.04, doorMat, 2.05);
-  wallBox(core.x + core.w / 2 + gap * 0.26, base, core.y + 0.16, gap * 0.42, 0.04, doorMat, 2.05);
-  wallBox(core.x + core.w * 0.34, base, core.y + core.d / 2, t, core.d - t * 2, material, h);
-  wallBox(core.x + core.w * 0.67, base, core.y + core.d / 2, t, core.d - t * 2, material, h);
-  const cabin = standard("#1c1c1c", 0.4);
-  wallBox(core.x + core.w * 0.17, base, core.y + core.d * 0.55, 0.9, 0.08, cabin, 2.1);
-  wallBox(core.x + core.w * 0.5, base, core.y + core.d * 0.55, 0.9, 0.08, cabin, 2.1);
-  addLabel("비상구", core.x + core.w / 2, base + h + 0.15, core.y + core.d / 2, 2.4);
+  const labelText = core.kind === "stair" ? "피난계단" : "코어";
+  addLabel(labelText, core.x + core.w / 2, base + h + 0.2, core.y + core.d / 2, 2.2);
 }
 
 function addRamp(ramp, material, base, hazard) {

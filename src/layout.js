@@ -1057,7 +1057,237 @@ export function clampCore(core, plate) {
   if (core.ny) out.ny = core.ny;
   if (core.kind) out.kind = core.kind;
   if (core.buildingId != null) out.buildingId = core.buildingId;
+  if (core.doorSide) out.doorSide = core.doorSide;
+  if (core.interior) out.interior = core.interior;
   return out;
+}
+
+/**
+ * 코어 출입문 면 고르기: 이미 차로가 닿는 면 우선, 없으면 긴 면의 바깥(남/동).
+ */
+export function pickCoreDoorSide(core, aisles, blockRects) {
+  if (!core) return "s";
+  if (core.kind === "stair") return core.doorSide || "s";
+  const face = (blockRects || []).find((b) => b && b.buildingId === core.buildingId) || core;
+  const order = face.w >= face.d - 0.05 ? ["s", "n", "e", "w"] : ["e", "w", "s", "n"];
+  const touched = order.filter((dir) => (aisles || []).some((a) => coreSideTouched(face, a, dir)));
+  if (touched.length) return touched[0];
+  return order[0];
+}
+
+/**
+ * 코어 내부: 출입 전실 + 승강기(1~2대) + 피난계단.
+ * doorClear는 문 밖 차로 쪽 금지 구역(주차칸이 문을 막지 않게).
+ */
+export function coreInterior(core, doorSide = "s") {
+  if (!core) return null;
+  const side = doorSide || "s";
+  const wall = WALL_T;
+  const doorW = Math.min(1.5, Math.max(1.0, Math.min(core.w, core.d) * 0.28));
+  const elevW = Math.min(2.1, Math.max(1.6, Math.min(core.w, core.d) * 0.28));
+  const elevD = Math.min(2.4, Math.max(1.8, elevW + 0.2));
+  const stairW = Math.min(2.6, Math.max(1.8, Math.min(core.w, core.d) * 0.32));
+  const pad = wall + 0.15;
+  const r3 = (v) => Math.round(v * 1000) / 1000;
+
+  // 출입문이 있는 벽을 기준으로 전실 → 승강기 → 계단 순으로 깊이를 나눈다.
+  const along = (side === "n" || side === "s") ? core.w : core.d;
+  const depth = (side === "n" || side === "s") ? core.d : core.w;
+  const lobbyDepth = Math.min(2.2, Math.max(1.4, depth * 0.28));
+  const elevCount = along >= elevW * 2 + stairW + 1.2 ? 2 : 1;
+
+  const door = (() => {
+    if (side === "s") return { x: core.x + (core.w - doorW) / 2, y: core.y, w: doorW, d: wall };
+    if (side === "n") return { x: core.x + (core.w - doorW) / 2, y: core.y + core.d - wall, w: doorW, d: wall };
+    if (side === "w") return { x: core.x, y: core.y + (core.d - doorW) / 2, w: wall, d: doorW };
+    return { x: core.x + core.w - wall, y: core.y + (core.d - doorW) / 2, w: wall, d: doorW };
+  })();
+
+  // 문 밖 6m×(문폭+여유) 금지 — 주차칸이 출입을 막지 않게
+  const clearW = Math.min(along, Math.max(doorW + 2.0, 4.0));
+  const doorClear = (() => {
+    if (side === "s") {
+      return {
+        x: r3(core.x + (core.w - clearW) / 2),
+        y: r3(core.y - AISLE),
+        w: r3(clearW),
+        d: r3(AISLE),
+        role: "core-door",
+        doorSide: side,
+      };
+    }
+    if (side === "n") {
+      return {
+        x: r3(core.x + (core.w - clearW) / 2),
+        y: r3(core.y + core.d),
+        w: r3(clearW),
+        d: r3(AISLE),
+        role: "core-door",
+        doorSide: side,
+      };
+    }
+    if (side === "w") {
+      return {
+        x: r3(core.x - AISLE),
+        y: r3(core.y + (core.d - clearW) / 2),
+        w: r3(AISLE),
+        d: r3(clearW),
+        role: "core-door",
+        doorSide: side,
+      };
+    }
+    return {
+      x: r3(core.x + core.w),
+      y: r3(core.y + (core.d - clearW) / 2),
+      w: r3(AISLE),
+      d: r3(clearW),
+      role: "core-door",
+      doorSide: side,
+    };
+  })();
+
+  const lobby = (() => {
+    if (side === "s") {
+      return { x: r3(core.x + pad), y: r3(core.y + wall), w: r3(core.w - pad * 2), d: r3(lobbyDepth) };
+    }
+    if (side === "n") {
+      return {
+        x: r3(core.x + pad),
+        y: r3(core.y + core.d - wall - lobbyDepth),
+        w: r3(core.w - pad * 2),
+        d: r3(lobbyDepth),
+      };
+    }
+    if (side === "w") {
+      return { x: r3(core.x + wall), y: r3(core.y + pad), w: r3(lobbyDepth), d: r3(core.d - pad * 2) };
+    }
+    return {
+      x: r3(core.x + core.w - wall - lobbyDepth),
+      y: r3(core.y + pad),
+      w: r3(lobbyDepth),
+      d: r3(core.d - pad * 2),
+    };
+  })();
+
+  // 승강기·계단은 출입 반대쪽 벽에 붙인다.
+  const elevators = [];
+  if (side === "s" || side === "n") {
+    const backY = side === "s"
+      ? core.y + core.d - pad - elevD
+      : core.y + pad;
+    const span = elevCount * elevW + (elevCount - 1) * 0.25 + stairW + 0.35;
+    let x0 = core.x + Math.max(pad, (core.w - span) / 2);
+    for (let i = 0; i < elevCount; i += 1) {
+      elevators.push({
+        x: r3(x0),
+        y: r3(backY),
+        w: r3(elevW),
+        d: r3(elevD),
+        label: `EL${i + 1}`,
+      });
+      x0 += elevW + 0.25;
+    }
+    const stair = {
+      x: r3(x0 + 0.1),
+      y: r3(side === "s" ? core.y + core.d - pad - Math.min(stairW * 1.6, core.d - lobbyDepth - pad * 2) : core.y + pad),
+      w: r3(stairW),
+      d: r3(Math.min(stairW * 1.6, core.d - lobbyDepth - pad * 2)),
+      label: "ST",
+    };
+    return { doorSide: side, door, doorClear, lobby, elevators, stair };
+  }
+
+  const backX = side === "w"
+    ? core.x + core.w - pad - elevD
+    : core.x + pad;
+  const span = elevCount * elevW + (elevCount - 1) * 0.25 + stairW + 0.35;
+  let y0 = core.y + Math.max(pad, (core.d - span) / 2);
+  for (let i = 0; i < elevCount; i += 1) {
+    elevators.push({
+      x: r3(backX),
+      y: r3(y0),
+      w: r3(elevD),
+      d: r3(elevW),
+      label: `EL${i + 1}`,
+    });
+    y0 += elevW + 0.25;
+  }
+  const stair = {
+    x: r3(side === "w" ? core.x + core.w - pad - Math.min(stairW * 1.6, core.w - lobbyDepth - pad * 2) : core.x + pad),
+    y: r3(y0 + 0.1),
+    w: r3(Math.min(stairW * 1.6, core.w - lobbyDepth - pad * 2)),
+    d: r3(stairW),
+    label: "ST",
+  };
+  return { doorSide: side, door, doorClear, lobby, elevators, stair };
+}
+
+/** 피난 전용 계단 코어 내부(계단만). */
+export function stairCoreInterior(core, doorSide = "s") {
+  if (!core) return null;
+  const side = doorSide || "s";
+  const wall = WALL_T;
+  const doorW = Math.min(1.2, Math.min(core.w, core.d) * 0.4);
+  const door = side === "s" ? { x: core.x + (core.w - doorW) / 2, y: core.y, w: doorW, d: wall }
+    : side === "n" ? { x: core.x + (core.w - doorW) / 2, y: core.y + core.d - wall, w: doorW, d: wall }
+      : side === "w" ? { x: core.x, y: core.y + (core.d - doorW) / 2, w: wall, d: doorW }
+        : { x: core.x + core.w - wall, y: core.y + (core.d - doorW) / 2, w: wall, d: doorW };
+  const clearW = Math.min(Math.max(core.w, core.d), Math.max(doorW + 1.5, 3.5));
+  const doorClear = side === "s"
+    ? { x: core.x + (core.w - clearW) / 2, y: core.y - AISLE, w: clearW, d: AISLE, role: "core-door", doorSide: side }
+    : side === "n"
+      ? { x: core.x + (core.w - clearW) / 2, y: core.y + core.d, w: clearW, d: AISLE, role: "core-door", doorSide: side }
+      : side === "w"
+        ? { x: core.x - AISLE, y: core.y + (core.d - clearW) / 2, w: AISLE, d: clearW, role: "core-door", doorSide: side }
+        : { x: core.x + core.w, y: core.y + (core.d - clearW) / 2, w: AISLE, d: clearW, role: "core-door", doorSide: side };
+  const stair = {
+    x: core.x + wall + 0.2,
+    y: core.y + wall + 0.2,
+    w: Math.max(1.5, core.w - wall * 2 - 0.4),
+    d: Math.max(1.5, core.d - wall * 2 - 0.4),
+    label: "ST",
+  };
+  return { doorSide: side, door, doorClear, lobby: null, elevators: [], stair };
+}
+
+/**
+ * 코어에 출입문·내부 배치를 붙이고, 문 앞 keepClear·출입면 차로를 보강한다.
+ */
+export function applyCoreInteriors(cores, aisles, plate, blockers, keepClear) {
+  const list = (cores || []).map((c) => ({ ...c }));
+  let nextAisles = aisles || [];
+  const clears = keepClear || [];
+  list.forEach((core, i) => {
+    const face = coreFaceOf(core, blockers) || core;
+    const foreign = coreForeignBlockers(core, face, blockers);
+    const doorSide = pickCoreDoorSide(core, nextAisles, (blockers || []).filter((b) => b && b.buildingId != null));
+    // 출입면에는 반드시 차로
+    nextAisles = addCoreSideAisle(nextAisles, face, plate, foreign, doorSide);
+    const interior = (core.kind === "stair")
+      ? stairCoreInterior(core, doorSide)
+      : coreInterior(core, doorSide);
+    if (!interior) return;
+    // 문 앞 금지 구역을 평면 안으로 클립
+    const dc = interior.doorClear;
+    if (dc && plate) {
+      const x0 = Math.max(0, dc.x);
+      const y0 = Math.max(0, dc.y);
+      const x1 = Math.min(plate.width, dc.x + dc.w);
+      const y1 = Math.min(plate.depth, dc.y + dc.d);
+      if (x1 - x0 > 0.5 && y1 - y0 > 0.5) {
+        clears.push({
+          ...dc,
+          x: round3(x0),
+          y: round3(y0),
+          w: round3(x1 - x0),
+          d: round3(y1 - y0),
+          role: "core-door",
+        });
+      }
+    }
+    list[i] = { ...core, doorSide, interior };
+  });
+  return { cores: list, aisles: nextAisles, keepClear: clears };
 }
 
 // ── 코어 격자 맞춤 ───────────────────────────────────────────
@@ -2190,6 +2420,13 @@ function layoutCore(input) {
   blockRects.forEach((b) => {
     aisles = ensureBlockAccess(aisles, b, plate, blockers);
   });
+  // 코어 내부(승강기·계단·전실) + 출입문 면 차로 + 문 앞 주차 금지
+  {
+    const applied = applyCoreInteriors(cores, aisles, plate, blockers, keepClear);
+    applied.cores.forEach((c, i) => { cores[i] = c; });
+    aisles = applied.aisles;
+    // keepClear는 applied가 같은 배열을 밀어 넣음
+  }
   const lowerExtras = occRamps.filter((r) => r && r !== ramp && (r.level === "lower" || Number(r.id) > 1000));
   stampPortals(aisles, openings, ramp, plate, lowerExtras);
 
@@ -2442,6 +2679,21 @@ function layoutCore(input) {
   cores.forEach((core) => {
     aisles = ensureCoreFrontAisle(aisles, core, plate, cores.concat(blockRects || []));
   });
+  // 최종 차로 기준으로 출입문 면·내부 배치를 다시 맞추고, 문 앞 금지 구역을 갱신한다.
+  {
+    for (let i = keepClear.length - 1; i >= 0; i -= 1) {
+      if (keepClear[i] && keepClear[i].role === "core-door") keepClear.splice(i, 1);
+    }
+    const applied = applyCoreInteriors(cores, aisles, plate, cores.concat(blockRects || []), keepClear);
+    applied.cores.forEach((c, i) => { cores[i] = c; });
+    aisles = applied.aisles;
+    // 문 앞과 겹친 칸 제거
+    for (let i = stalls.length - 1; i >= 0; i -= 1) {
+      if (keepClear.some((z) => z.role === "core-door" && overlapArea(stalls[i], z) > 0.05)) {
+        stalls.splice(i, 1);
+      }
+    }
+  }
   pushStallsBack(stalls, aisles, columns.concat(fixedBlocks, openings.map((opening) => mouthRect(opening, plate))), plate);
   // 기둥 격자 채우기: 주차줄 뒤에만 서던 기둥에 더해, 격자선 교점 중 빈 곳(차로·칸·코어·램프·출입구 앞이 아닌 곳)에도 기둥을 세운다.
   // gridDropped = 칸에 걸려 못 세운 교점 수.

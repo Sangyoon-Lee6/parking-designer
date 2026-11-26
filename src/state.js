@@ -16,12 +16,15 @@ import {
   rampShape,
   referenceCase,
   siteMarginsOf,
+  coreInterior,
   nudgeCoresClearOfRamps,
+  pickCoreDoorSide,
   spaceCoresForTowers,
   stairCore,
+  stairCoreInterior,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=294";
+} from "./layout.js?v=295";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -487,6 +490,19 @@ export function optimizeLayout({ refresh = true } = {}) {
   if (refresh) refreshVariants();
 }
 
+/** 셸에서도 코어 내부(승강기·계단) 미리보기를 붙인다. */
+function attachCoreInteriorsPreview() {
+  const aisles = state.aisles || [];
+  const blocks = state.plate?.blockRects || [];
+  state.cores = (state.cores || []).map((core) => {
+    const doorSide = pickCoreDoorSide(core, aisles, blocks);
+    const interior = core.kind === "stair"
+      ? stairCoreInterior(core, doorSide)
+      : coreInterior(core, doorSide);
+    return { ...core, doorSide, interior };
+  });
+}
+
 /** 셸 단계에서 코어가 램프 점유·동선을 막지 않게 밀어, 사면 차로 자리를 남긴다. */
 function clearCoresFromRamps() {
   if (!state.plate || !(state.ramps && state.ramps.length) || !(state.cores && state.cores.length)) return;
@@ -499,6 +515,7 @@ function clearCoresFromRamps() {
     state.cores = nudgeCoresClearOfRamps(state.cores, state.ramps, state.plate, state.buildings);
     state.plate.blockRects = towerBlockRects(state.buildings, state.cores, state.plate);
   }
+  attachCoreInteriorsPreview();
   syncCore();
 }
 

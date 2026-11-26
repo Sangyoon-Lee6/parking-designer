@@ -1,19 +1,19 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=294";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=295";
 import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=282";
-import { drawThumb, invalidatePlanFit, mountPlan } from "./plan.js?v=294";
+import { drawThumb, invalidatePlanFit, mountPlan } from "./plan.js?v=295";
 import { stallRuleTargets } from "./stallTypes.js?v=282";
 import {
   plateDimsFromPolygon, presetChamferRect, presetL, presetTrapezoid, presetU,
   rectPolygon, validatePolygon, normalizePolygon, offsetPolygon, polygonArea, edgeLengths,
 } from "./polygon.js?v=282";
 import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=282";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, pinLowerRampOverrides, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState, rebuildLayout } from "./state.js?v=294";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, pinLowerRampOverrides, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState, rebuildLayout } from "./state.js?v=295";
 
 // 시트·DXF·주변지도는 클릭 시에만 불러 초기 로딩을 줄인다.
 let sheetMod = null;
 let dxfMod = null;
 let contextMod = null;
-const loadSheet = () => (sheetMod ||= import("./sheet.js?v=294"));
+const loadSheet = () => (sheetMod ||= import("./sheet.js?v=295"));
 const loadDxf = () => (dxfMod ||= import("./dxfExport.js?v=282"));
 const loadContext = () => (contextMod ||= import("./context.js?v=282"));
 async function closeContext() {
@@ -887,7 +887,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=294")
+    sceneMount = import("./scene.js?v=295")
       .then((module) => {
         const root = $("scene-root");
         if (!root) throw new Error("scene-root 없음");

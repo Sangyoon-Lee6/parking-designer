@@ -1,4 +1,7 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=294";
+import {
+  coreInterior, edgePoint, pickCoreDoorSide, pickEdge, rampFootprint, rampShape,
+  rampsForLevel, siteMarginsOf, stairCoreInterior,
+} from "./layout.js?v=295";
 import {
   analyzeOnPlate, buildChain, slopePlan, usesModuleLayout,
 } from "./rampModules.js?v=282";
@@ -8,7 +11,7 @@ import {
 import {
   emit, moveLowerRamp, moveOpening, moveRamp, moveRampFree, placeOpening, placeRamp,
   selectCore, selectItem, setParkPolygon, state, subscribe, updateCore,
-} from "./state.js?v=294";
+} from "./state.js?v=295";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -198,6 +201,10 @@ export function mountPlan(canvas) {
       ctx.lineWidth = (selected ? 2.6 : 1.8) / camera.scale;
       ctx.fillRect(core.x, core.y, core.w, core.d);
       ctx.strokeRect(core.x, core.y, core.w, core.d);
+      const interior = core.interior || (stair
+        ? stairCoreInterior(core, core.doorSide || pickCoreDoorSide(core, state.aisles, state.plate?.blockRects))
+        : coreInterior(core, core.doorSide || pickCoreDoorSide(core, state.aisles, state.plate?.blockRects)));
+      if (interior) drawCoreInterior(ctx, interior, camera.scale);
       const name = stair
         ? `계단 ${stairNo}`
         : (building ? building.name : `코어 ${index + 1}`);
@@ -1073,6 +1080,67 @@ function offsetOutwardApprox(poly, dist) {
 function fmtM(v) {
   const n = Number(v);
   return `${Number.isInteger(n) ? n : n.toFixed(1)}m`;
+}
+
+/** 코어 내부 승강기·계단·전실·출입문 표시. */
+function drawCoreInterior(ctx, interior, scale) {
+  if (!interior) return;
+  const lw = 1.1 / (scale || 12);
+  if (interior.lobby) {
+    ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.fillRect(interior.lobby.x, interior.lobby.y, interior.lobby.w, interior.lobby.d);
+  }
+  (interior.elevators || []).forEach((el) => {
+    ctx.fillStyle = "rgba(30, 30, 30, 0.55)";
+    ctx.strokeStyle = "#1a1a1a";
+    ctx.lineWidth = lw;
+    ctx.fillRect(el.x, el.y, el.w, el.d);
+    ctx.strokeRect(el.x, el.y, el.w, el.d);
+    // 카 문 힌트
+    ctx.strokeStyle = "#94a3b8";
+    ctx.beginPath();
+    ctx.moveTo(el.x + el.w * 0.15, el.y + el.d * 0.08);
+    ctx.lineTo(el.x + el.w * 0.85, el.y + el.d * 0.08);
+    ctx.stroke();
+    label(ctx, el.label || "EL", el.x + el.w / 2, el.y + el.d / 2, "#f8fafc");
+  });
+  if (interior.stair) {
+    const st = interior.stair;
+    ctx.fillStyle = "rgba(100, 116, 139, 0.25)";
+    ctx.strokeStyle = "#475569";
+    ctx.lineWidth = lw;
+    ctx.fillRect(st.x, st.y, st.w, st.d);
+    ctx.strokeRect(st.x, st.y, st.w, st.d);
+    const steps = 5;
+    ctx.strokeStyle = "#64748b";
+    for (let i = 1; i < steps; i += 1) {
+      const t = i / steps;
+      ctx.beginPath();
+      if (st.w >= st.d) {
+        ctx.moveTo(st.x + st.w * t, st.y);
+        ctx.lineTo(st.x + st.w * t, st.y + st.d);
+      } else {
+        ctx.moveTo(st.x, st.y + st.d * t);
+        ctx.lineTo(st.x + st.w, st.y + st.d * t);
+      }
+      ctx.stroke();
+    }
+    label(ctx, "계단", st.x + st.w / 2, st.y + st.d / 2, "#334155");
+  }
+  if (interior.door) {
+    const d = interior.door;
+    ctx.strokeStyle = "#0f766e";
+    ctx.lineWidth = 2.4 / (scale || 12);
+    ctx.beginPath();
+    if (d.w >= d.d) {
+      ctx.moveTo(d.x, d.y + d.d / 2);
+      ctx.lineTo(d.x + d.w, d.y + d.d / 2);
+    } else {
+      ctx.moveTo(d.x + d.w / 2, d.y);
+      ctx.lineTo(d.x + d.w / 2, d.y + d.d);
+    }
+    ctx.stroke();
+  }
 }
 
 function overlayImage() {
