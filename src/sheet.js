@@ -1,4 +1,7 @@
-import { AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, rampFootprint, siteMarginsOf } from "./layout.js?v=282";
+import {
+  AISLE, FLOOR_H, RAMP_SLOPE_STRAIGHT, coreInterior, pickCoreDoorSide,
+  rampFootprint, siteMarginsOf, stairCoreInterior,
+} from "./layout.js?v=295";
 import { buildChain, slopePlan } from "./rampModules.js?v=282";
 import { polygonFromPlate } from "./polygon.js?v=282";
 
@@ -134,8 +137,31 @@ export function renderSheet(paint, state, info, floorIndex) {
       }
     }
     paint.strokeRect(xOf(core.x), yOf(core.y + core.d), core.w * scale, core.d * scale, "#111", 2.4);
-    paint.line(xOf(core.x + core.w * 0.34), yOf(core.y + core.d), xOf(core.x + core.w * 0.34), yOf(core.y), "#111", 1);
-    paint.line(xOf(core.x + core.w * 0.67), yOf(core.y + core.d), xOf(core.x + core.w * 0.67), yOf(core.y), "#111", 1);
+    const interior = core.interior || (core.kind === "stair"
+      ? stairCoreInterior(core, core.doorSide || "s")
+      : coreInterior(core, core.doorSide || pickCoreDoorSide(core, state.aisles, state.plate?.blockRects)));
+    if (interior) {
+      (interior.elevators || []).forEach((el) => {
+        paint.strokeRect(xOf(el.x), yOf(el.y + el.d), el.w * scale, el.d * scale, "#111", 1.2);
+        paint.text(xOf(el.x + el.w / 2) - 8, yOf(el.y + el.d / 2), el.label || "EL", 9, "#111");
+      });
+      if (interior.stair) {
+        const st = interior.stair;
+        paint.strokeRect(xOf(st.x), yOf(st.y + st.d), st.w * scale, st.d * scale, "#333", 1.2);
+        paint.text(xOf(st.x + st.w / 2) - 10, yOf(st.y + st.d / 2), "계단", 9, "#333");
+      }
+      if (interior.door) {
+        const d = interior.door;
+        paint.line(
+          xOf(d.x), yOf(d.y + d.d / 2),
+          xOf(d.x + d.w), yOf(d.y + d.d / 2),
+          "#0f766e", 2.2,
+        );
+      }
+    } else {
+      paint.line(xOf(core.x + core.w * 0.34), yOf(core.y + core.d), xOf(core.x + core.w * 0.34), yOf(core.y), "#111", 1);
+      paint.line(xOf(core.x + core.w * 0.67), yOf(core.y + core.d), xOf(core.x + core.w * 0.67), yOf(core.y), "#111", 1);
+    }
     let name = `코어 ${index + 1}`;
     if (core.kind === "stair") {
       stairNo += 1;
@@ -415,8 +441,12 @@ export function fitSheetCanvas(canvas) {
   const availW = Math.max(80, parent.clientWidth - pad);
   const availH = Math.max(80, parent.clientHeight - pad);
   const scale = Math.min(availW / 1580, availH / 1040, 1);
-  canvas.style.width = `${Math.round(1580 * scale)}px`;
-  canvas.style.height = `${Math.round(1040 * scale)}px`;
+  const w = Math.max(1, Math.round(1580 * scale));
+  const h = Math.max(1, Math.round(1040 * scale));
+  canvas.style.width = `${w}px`;
+  canvas.style.height = `${h}px`;
+  canvas.style.maxWidth = "100%";
+  canvas.style.maxHeight = "100%";
 }
 
 export function drawSheet(canvas, state, info, floorIndex) {

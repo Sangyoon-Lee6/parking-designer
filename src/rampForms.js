@@ -21,12 +21,14 @@ export const SAG_LEN = 2;
 export const RAMP_R_IN = 6;
 export const RAMP_CURVE_W = 6.5;
 
-export const RAMP_FORMS = ["auto", "straight", "curve90", "spiral"];
-export const LOWER_RAMP_FORMS = ["auto", "same", "straight", "curve90", "spiral"];
+export const RAMP_FORMS = ["auto", "straight", "curve90", "outer9090", "outer180", "spiral"];
+export const LOWER_RAMP_FORMS = ["auto", "same", "straight", "curve90", "outer9090", "outer180", "spiral"];
 export const LOWER_RAMP_MODES = ["alternate", "same"];
 
 export function rampFormOf(ramp, fallback = "auto") {
   const f = (ramp && ramp.form) || fallback || "auto";
+  // 예전 «외곽 회전»은 외부형에서 90·직선·90으로 취급
+  if (f === "spiral") return f;
   return RAMP_FORMS.includes(f) ? f : "auto";
 }
 
@@ -36,8 +38,9 @@ export function resolveLowerRampForm(groundForm, lowerForm = "auto") {
   const pick = LOWER_RAMP_FORMS.includes(lowerForm) ? lowerForm : "auto";
   if (pick === "same") return g;
   if (pick !== "auto") return pick;
-  // 자동: 지상이 외곽 회전이면 연속, 직선이면 깊이 맞춰 곡선 후보, 그 외는 유지
-  if (g === "spiral") return "spiral";
+  // 자동: 출입 형태를 따르되, 외곽 회전은 90·직선·90으로
+  if (g === "spiral") return "outer9090";
+  if (g === "outer9090" || g === "outer180") return g;
   if (g === "straight") return "auto";
   if (g === "auto") return "curve90";
   return g;
@@ -101,46 +104,76 @@ function clamp(v, a, b) {
  * mode: alternate = 반대쪽 변 / same = 동일 XY
  * lowerForm: auto|same|straight|curve90|spiral (plate.lowerRampForm)
  */
-export function lowerFloorRamp(groundRamp, plate, mode = "alternate", lowerForm = "auto") {
+export function lowerFloorRamp(groundRamp, plate, mode = "alternate", lowerForm = "auto", override = null) {
   if (!groundRamp) return null;
   const baseForm = rampFormOf(groundRamp, plate && plate.rampForm);
   const form = resolveLowerRampForm(baseForm, lowerForm || (plate && plate.lowerRampForm) || "auto");
   const tr = rampTransitions(plate, "lower");
-  if (mode === "same") {
+  const needsCurveW = form === "curve90" || form === "spiral" || form === "outer9090" || form === "outer180";
+  const outer = form === "outer9090" || form === "outer180" || form === "spiral";
+  const width = needsCurveW
+    ? Math.max(groundRamp.width || AISLE, RAMP_CURVE_W)
+    : (groundRamp.width || AISLE);
+  const length = outer && form === "spiral"
+    ? groundRamp.length
+    : minStraightRampLengthLocal(floorHeightOf(plate), tr);
+  const placement = outer
+    ? (override?.placement || groundRamp.placement || "external")
+    : (override?.placement || "internal");
+
+  // 층간 램프는 출입 모듈 사슬을 그대로 쓰지 않는다(다른 변·형태인데 옛 사슬이면 3D가 팬/어긋난 메시가 됨).
+  const stripChain = {
+    modules: undefined,
+    x: undefined,
+    y: undefined,
+    heading: undefined,
+    mode: undefined,
+    legacy: undefined,
+    innerRadius: undefined,
+    levels: undefined,
+    mixed: undefined,
+  };
+  if (mode === "same" && !override) {
     return {
       ...groundRamp,
+      ...stripChain,
       form,
       level: "lower",
-      length: form === "spiral" ? groundRamp.length : minStraightRampLengthLocal(floorHeightOf(plate), tr),
-      width: form === "curve90" || form === "spiral"
-        ? Math.max(groundRamp.width || AISLE, RAMP_CURVE_W)
-        : (groundRamp.width || AISLE),
+      length,
+      width,
+      placement,
+      groundId: groundRamp.id,
     };
   }
-  const edge = oppositeEdge(groundRamp.edge);
+  const edge = override?.edge || (mode === "same" ? groundRamp.edge : oppositeEdge(groundRamp.edge));
   const along = edge === "n" || edge === "s" ? plate.width : plate.depth;
-  const t = round1(along - (groundRamp.t || along / 2));
-  // 외곽 회전을 층간에도 쓰면 같은 가장자리 경로를 쓰되, 진입만 반대 변에서 시작
-  const keepSpiralPath = form === "spiral" && baseForm === "spiral";
+  const t = override?.t != null
+    ? Number(override.t)
+    : (mode === "same" ? groundRamp.t : round1(along - (groundRamp.t || along / 2)));
+  const keepSpiralPath = form === "spiral" && baseForm === "spiral" && !override;
   return {
     ...groundRamp,
+    ...stripChain,
     id: (Number(groundRamp.id) || 1) + 1000,
+    groundId: groundRamp.id,
     edge: keepSpiralPath ? groundRamp.edge : edge,
     t: keepSpiralPath ? groundRamp.t : t,
-    placement: form === "spiral" ? (groundRamp.placement || "internal") : "internal",
+    placement,
     form,
     level: "lower",
     inset: AISLE,
-    length: minStraightRampLengthLocal(floorHeightOf(plate), tr),
-    width: Math.max(groundRamp.width || AISLE, form === "straight" ? AISLE : RAMP_CURVE_W),
+    length,
+    width,
+    ...(override?.x != null ? { x: override.x, y: override.y } : {}),
   };
 }
 
-export function rampsForLevel(ramps, plate, level, lowerMode = "alternate") {
+export function rampsForLevel(ramps, plate, level, lowerMode = "alternate", overrides = null) {
   const list = (ramps || []).filter(Boolean);
   if (!list.length) return [];
   const mode = lowerMode || (plate && plate.lowerRampMode) || "alternate";
   const lowerForm = (plate && plate.lowerRampForm) || "auto";
+  const ov = overrides || plate?.lowerRampOverrides || {};
   if (level <= 0) {
     return list.map((r) => ({
       ...r,
@@ -148,10 +181,13 @@ export function rampsForLevel(ramps, plate, level, lowerMode = "alternate") {
       form: rampFormOf(r, plate && plate.rampForm),
     }));
   }
-  if (mode === "same") {
-    return list.map((r) => lowerFloorRamp(r, plate, "same", lowerForm)).filter(Boolean);
-  }
-  return list.map((r) => lowerFloorRamp(r, plate, "alternate", lowerForm)).filter(Boolean);
+  return list.map((r) => lowerFloorRamp(
+    r,
+    plate,
+    mode,
+    lowerForm,
+    ov[r.id] || ov[String(r.id)] || null,
+  )).filter(Boolean);
 }
 
 export function occupancyRamps(ramps, plate, lowerMode = "alternate") {
@@ -160,8 +196,14 @@ export function occupancyRamps(ramps, plate, lowerMode = "alternate") {
   const mode = lowerMode || (plate && plate.lowerRampMode) || "alternate";
   if (mode === "same") return ground;
   const lowerForm = (plate && plate.lowerRampForm) || "auto";
-  // 같은 외곽 회전 경로면 자리 중복 — 한 번만 비움
-  const lowers = ground.map((r) => lowerFloorRamp(r, plate, "alternate", lowerForm)).filter(Boolean);
+  const ov = plate?.lowerRampOverrides || {};
+  const lowers = ground.map((r) => lowerFloorRamp(
+    r,
+    plate,
+    "alternate",
+    lowerForm,
+    ov[r.id] || ov[String(r.id)] || null,
+  )).filter(Boolean);
   const sameSpiral = lowers.every((r, i) => {
     const g = ground[i];
     return rampFormOf(g, plate && plate.rampForm) === "spiral"
@@ -624,6 +666,13 @@ export function externalCurve90Shape(ramp, plate, helpers) {
     .concat([{ name: "외부 곡선 90°", length: round1(arc), drop: round3(dropArcMax * ease), slope: round3(RAMP_SLOPE_CURVE * ease) }]);
   if (sInMain > 0) segments.push({ name: "진입 직선", length: sInMain, drop: round3(rest), slope: round3(rest / sInMain) });
 
+  // 출입: 건축선 입구(도로→램프) + 안쪽 90° 출구(차로 연결). 도로 쪽은 exterior.
+  const wallLip = toLocal.rect({ u0: ramp.t - W / 2, u1: ramp.t + W / 2, v0: 0, v1: 1.2 });
+  const mouthIn = { u: ramp.t, lip: wallLip, role: "in", exterior: true };
+  // 출구 중심 = 진입 직선 중점 (uc → uc+sgn·sIn)
+  const mouthOut = sIn > 0
+    ? { u: uc + sgn * (sIn / 2), lip: pieces[pieces.length - 1], role: "out" }
+    : null;
   return {
     kind: "curved",
     ok: !reason,
@@ -634,9 +683,239 @@ export function externalCurve90Shape(ramp, plate, helpers) {
     segments,
     total: round1(sOut + arc + sIn),
     approach: sIn > 0 ? pieces[pieces.length - 1] : null,
-    lip: null,
+    lip: wallLip,
+    mouths: mouthOut ? [mouthIn, mouthOut] : [mouthIn],
     turn: sgn,
     externalCurve: true,
+    outerKind: "curve90",
+    outsideReach: round1(needMargin),
     footprint: pieces[0],
+  };
+}
+
+/**
+ * 참조 도면형 90°·직선·90° (U자): 건축선 밖 두 평행 차로를
+ * 바깥 90° → 직선 → 90°로 잇는다. (사진1)
+ * local: +v=안쪽, −v=바깥. ramp.t = U 중심.
+ */
+export function externalBend9090Shape(ramp, plate, helpers) {
+  const { localFrame, rectPoly } = helpers;
+  const H = floorHeightOf(plate);
+  const tr = rampTransitions(plate, ramp.level === "lower" ? "lower" : "ground");
+  const W = Math.max(AISLE, ramp.width || AISLE, RAMP_CURVE_W);
+  const Ri = innerCurveRadius(plate);
+  const Rc = Ri + W / 2;
+  const Ro = Ri + W;
+  const vertical = ramp.edge === "n" || ramp.edge === "s";
+  const along = vertical ? plate.width : plate.depth;
+  const toLocal = localFrame(ramp.edge, plate);
+  const m = plate.siteMargin == null ? 20 : Number(plate.siteMargin);
+
+  // 바깥 평행 직선 길이(격자 1~2스팬). 돌출 ≈ Ro
+  const sSide = Math.max(6, Math.min(Math.max(0, m - Ro), Math.max(8, (Number(ramp.length) || 18) * 0.4)));
+  const arc = (Math.PI / 2) * Rc;
+  const lip = Math.max(2.4, W * 0.45); // 벽 안쪽 입·출구 짧은 직선
+  const totalLen = lip + arc + sSide + arc + lip;
+  const ease = Math.min(1, H / Math.max(1e-6, totalLen * RAMP_SLOPE_CURVE));
+
+  let reason = "";
+  if (Ro > m + 0.05) reason = `90·직선·90 램프가 대지 여유 ${m}m를 넘습니다(필요 약 ${round1(Ro)}m)`;
+
+  // 두 모서리 중심 · 입·출구 (벽에 붙음)
+  const u1 = clamp(ramp.t - sSide / 2, Rc + 1, along - Rc - 1 - sSide);
+  const u2 = u1 + sSide;
+  const mouthA = u1 - Rc; // 시작 입구
+  const mouthB = u2 + Rc; // 끝 출구
+
+  // 폴리: 바깥 U 띠 (AABB 조각)
+  const pieces = [
+    toLocal.rect({ u0: mouthA - W / 2, u1: mouthA + W / 2, v0: 0, v1: lip }),
+    toLocal.rect({ u0: u1 - Ro, u1: u1 + Ro, v0: -Ro, v1: 0 }),
+    toLocal.rect({ u0: u1, u1: u2, v0: -Ro, v1: -Ri }),
+    toLocal.rect({ u0: u2 - Ro, u1: u2 + Ro, v0: -Ro, v1: 0 }),
+    toLocal.rect({ u0: mouthB - W / 2, u1: mouthB + W / 2, v0: 0, v1: lip }),
+  ];
+
+  const at = (p, h) => ({ ...p, h: round3(h) });
+  const path = [];
+  let sAcc = 0;
+  let hAcc = 0;
+  const pushUV = (u, v, ds, slope) => {
+    sAcc += ds;
+    hAcc = Math.min(H, hAcc + ds * slope * ease);
+    path.push(at(toLocal.pt(u, v, sAcc), hAcc));
+  };
+
+  // 1) 입구 직선 (안 → 벽)
+  pushUV(mouthA, lip, 0, 0);
+  pushUV(mouthA, 0, lip, RAMP_SLOPE_STRAIGHT);
+  // 2) 1차 90°: 중심 (u1,0), θ=π → 3π/2 (벽 왼쪽 → 바깥)
+  for (let i = 1; i <= 12; i += 1) {
+    const a = Math.PI + (i / 12) * (Math.PI / 2);
+    pushUV(u1 + Rc * Math.cos(a), Rc * Math.sin(a), arc / 12, RAMP_SLOPE_CURVE);
+  }
+  // 3) 바깥 평행
+  pushUV(u2, -Rc, sSide, RAMP_SLOPE_STRAIGHT);
+  // 4) 2차 90°: 중심 (u2,0), θ=3π/2 → 2π (바깥 → 벽 오른쪽)
+  for (let i = 1; i <= 12; i += 1) {
+    const a = (Math.PI * 1.5) + (i / 12) * (Math.PI / 2);
+    pushUV(u2 + Rc * Math.cos(a), Rc * Math.sin(a), arc / 12, RAMP_SLOPE_CURVE);
+  }
+  // 5) 출구 직선 (벽 → 안)
+  pushUV(mouthB, lip, lip, RAMP_SLOPE_STRAIGHT);
+  // 높이 부족분은 경로 전체에 다시 펴서, 같은 XY에 수직으로 떨어지는 끝점(팬 메시)을 만들지 않는다.
+  if (path.length >= 2 && hAcc > 1e-6 && Math.abs(hAcc - H) > 0.05) {
+    const scale = H / hAcc;
+    path.forEach((p) => { p.h = round3(Math.min(H, p.h * scale)); });
+    hAcc = H;
+  } else if (path.length) {
+    path[path.length - 1].h = H;
+  }
+
+  const xs = path.map((p) => p.x);
+  const ys = path.map((p) => p.y);
+  const pad = W / 2;
+  return {
+    kind: "curved",
+    ok: !reason && path.length > 6,
+    reason,
+    pieces,
+    polygons: pieces.map(rectPoly),
+    path,
+    width: W,
+    segments: [
+      { name: "입구 직선", length: round1(lip), drop: round3(lip * RAMP_SLOPE_STRAIGHT * ease), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
+      { name: "1차 90°", length: round1(arc), drop: round3(arc * RAMP_SLOPE_CURVE * ease), slope: round3(RAMP_SLOPE_CURVE * ease) },
+      { name: "바깥 직선", length: round1(sSide), drop: round3(sSide * RAMP_SLOPE_STRAIGHT * ease), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
+      { name: "2차 90°", length: round1(arc), drop: round3(arc * RAMP_SLOPE_CURVE * ease), slope: round3(RAMP_SLOPE_CURVE * ease) },
+      { name: "출구 직선", length: round1(lip), drop: round3(Math.max(0, H - hAcc + lip * RAMP_SLOPE_STRAIGHT * ease)), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
+    ],
+    total: round1(sAcc),
+    approach: pieces[pieces.length - 1],
+    lip: pieces[0],
+    // 입·출구 두 곳 — 차로 동선이 각각 붙어야 함
+    mouths: [
+      { u: mouthA, lip: pieces[0], role: "in" },
+      { u: mouthB, lip: pieces[pieces.length - 1], role: "out" },
+    ],
+    turn: 1,
+    externalCurve: true,
+    outerKind: "outer9090",
+    outsideReach: round1(Ro),
+    footprint: {
+      x: round3(Math.min(...xs) - pad),
+      y: round3(Math.min(...ys) - pad),
+      w: round3(Math.max(...xs) - Math.min(...xs) + 2 * pad),
+      d: round3(Math.max(...ys) - Math.min(...ys) + 2 * pad),
+    },
+  };
+}
+
+/**
+ * 참조 도면형 180° 나선(반원): 건축선에 중심을 두고 바깥으로 반원 돌기.
+ * 두 평행 차로를 잇는다. (사진2)
+ */
+export function externalUTurn180Shape(ramp, plate, helpers) {
+  const { localFrame, rectPoly } = helpers;
+  const H = floorHeightOf(plate);
+  const W = Math.max(AISLE, ramp.width || AISLE, RAMP_CURVE_W);
+  const Ri = innerCurveRadius(plate);
+  const Rc = Ri + W / 2;
+  const Ro = Ri + W;
+  const vertical = ramp.edge === "n" || ramp.edge === "s";
+  const along = vertical ? plate.width : plate.depth;
+  const toLocal = localFrame(ramp.edge, plate);
+  const m = plate.siteMargin == null ? 20 : Number(plate.siteMargin);
+
+  const arc = Math.PI * Rc;
+  const lip = Math.max(2.4, W * 0.45);
+  const ease = Math.min(1, H / Math.max(1e-6, (arc + 2 * lip) * RAMP_SLOPE_CURVE));
+
+  let reason = "";
+  if (Ro > m + 0.05) reason = `180° 나선 램프가 대지 여유 ${m}m를 넘습니다(필요 약 ${round1(Ro)}m)`;
+
+  // 중심은 건축선(v=0). 입·출구는 t±Rc
+  const uc = clamp(ramp.t, Rc + 1, along - Rc - 1);
+  const mouthA = uc - Rc;
+  const mouthB = uc + Rc;
+
+  const pieces = [
+    toLocal.rect({ u0: mouthA - W / 2, u1: mouthA + W / 2, v0: 0, v1: lip }),
+    // 반원 외접 박스
+    toLocal.rect({ u0: uc - Ro, u1: uc + Ro, v0: -Ro, v1: 0 }),
+    toLocal.rect({ u0: mouthB - W / 2, u1: mouthB + W / 2, v0: 0, v1: lip }),
+  ];
+
+  // 폴리곤: 반원 고리 (바깥 호 + 안쪽 호 역순)
+  const ring = [];
+  const steps = 24;
+  for (let i = 0; i <= steps; i += 1) {
+    const a = Math.PI + (i / steps) * Math.PI; // π → 2π (바깥 반원, sin≤0)
+    ring.push(toLocal.pt(uc + Ro * Math.cos(a), Ro * Math.sin(a)));
+  }
+  for (let i = steps; i >= 0; i -= 1) {
+    const a = Math.PI + (i / steps) * Math.PI;
+    ring.push(toLocal.pt(uc + Ri * Math.cos(a), Ri * Math.sin(a)));
+  }
+
+  const at = (p, h) => ({ ...p, h: round3(h) });
+  const path = [];
+  let sAcc = 0;
+  let hAcc = 0;
+  const pushUV = (u, v, ds, slope) => {
+    sAcc += ds;
+    hAcc = Math.min(H, hAcc + ds * slope * ease);
+    path.push(at(toLocal.pt(u, v, sAcc), hAcc));
+  };
+
+  pushUV(mouthA, lip, 0, 0);
+  pushUV(mouthA, 0, lip, RAMP_SLOPE_STRAIGHT);
+  // 180°: θ=π → 2π (왼쪽 벽 → 바깥 → 오른쪽 벽)
+  for (let i = 1; i <= steps; i += 1) {
+    const a = Math.PI + (i / steps) * Math.PI;
+    pushUV(uc + Rc * Math.cos(a), Rc * Math.sin(a), arc / steps, RAMP_SLOPE_CURVE);
+  }
+  pushUV(mouthB, lip, lip, RAMP_SLOPE_STRAIGHT);
+  if (path.length >= 2 && hAcc > 1e-6 && Math.abs(hAcc - H) > 0.05) {
+    const scale = H / hAcc;
+    path.forEach((p) => { p.h = round3(Math.min(H, p.h * scale)); });
+    hAcc = H;
+  } else if (path.length) {
+    path[path.length - 1].h = H;
+  }
+
+  const xs = path.map((p) => p.x);
+  const ys = path.map((p) => p.y);
+  const pad = W / 2;
+  return {
+    kind: "spiral",
+    ok: !reason && path.length > 6,
+    reason,
+    pieces,
+    polygons: [rectPoly(pieces[0]), ring, rectPoly(pieces[2])],
+    path,
+    width: W,
+    segments: [
+      { name: "입구 직선", length: round1(lip), drop: round3(lip * RAMP_SLOPE_STRAIGHT * ease), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
+      { name: "180° 나선", length: round1(arc), drop: round3(arc * RAMP_SLOPE_CURVE * ease), slope: round3(RAMP_SLOPE_CURVE * ease) },
+      { name: "출구 직선", length: round1(lip), drop: round3(Math.max(0, H - hAcc + lip * RAMP_SLOPE_STRAIGHT * ease)), slope: round3(RAMP_SLOPE_STRAIGHT * ease) },
+    ],
+    total: round1(sAcc),
+    approach: pieces[2],
+    lip: pieces[0],
+    mouths: [
+      { u: mouthA, lip: pieces[0], role: "in" },
+      { u: mouthB, lip: pieces[2], role: "out" },
+    ],
+    turn: 1,
+    externalCurve: true,
+    outerKind: "outer180",
+    outsideReach: round1(Ro),
+    footprint: {
+      x: round3(Math.min(...xs) - pad),
+      y: round3(Math.min(...ys) - pad),
+      w: round3(Math.max(...xs) - Math.min(...xs) + 2 * pad),
+      d: round3(Math.max(...ys) - Math.min(...ys) + 2 * pad),
+    },
   };
 }

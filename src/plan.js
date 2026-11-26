@@ -1,4 +1,7 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=284";
+import {
+  coreInterior, edgePoint, pickCoreDoorSide, pickEdge, rampFootprint, rampShape,
+  rampsForLevel, siteMarginsOf, stairCoreInterior,
+} from "./layout.js?v=295";
 import {
   analyzeOnPlate, buildChain, slopePlan, usesModuleLayout,
 } from "./rampModules.js?v=282";
@@ -6,9 +9,9 @@ import {
   polygonFromPlate, snapPoint, edgeLengths, polygonArea,
 } from "./polygon.js?v=282";
 import {
-  emit, moveOpening, moveRamp, moveRampFree, placeOpening, placeRamp,
+  emit, moveLowerRamp, moveOpening, moveRamp, moveRampFree, placeOpening, placeRamp,
   selectCore, selectItem, setParkPolygon, state, subscribe, updateCore,
-} from "./state.js?v=284";
+} from "./state.js?v=295";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -130,15 +133,15 @@ export function mountPlan(canvas) {
     }
 
     const blockedRamps = new Set(state.issues.filter((issue) => issue.type === "ramp").map((issue) => issue.id));
-    const groundDraw = rampsForLevel(state.ramps, plate, 0, "same");
+    const groundDraw = rampsForLevel(state.ramps, plate, 0, "same", state.lowerRampOverrides);
     const lowerMode = state.lowerRampMode || (plate && plate.lowerRampMode) || "alternate";
-    const drawList = groundDraw.concat(
-      lowerMode === "alternate"
-        ? rampsForLevel(state.ramps, plate, 1, "alternate").map((r) => ({ ...r, _lower: true }))
-        : [],
-    );
+    const lowers = rampsForLevel(state.ramps, plate, 1, lowerMode, state.lowerRampOverrides)
+      .map((r) => ({ ...r, _lower: true }));
+    const drawList = groundDraw.concat(lowers);
     drawList.forEach((ramp) => {
-      const selected = !ramp._lower && state.selection?.type === "ramp" && state.selection.id === ramp.id;
+      const selected = ramp._lower
+        ? state.selection?.type === "lowerRamp" && state.selection.id === (ramp.groundId ?? ramp.id - 1000)
+        : state.selection?.type === "ramp" && state.selection.id === ramp.id;
       const selMod = selected ? state.selection?.module : null;
       const blocked = blockedRamps.has(ramp.id);
       const lower = ramp._lower;
@@ -198,6 +201,10 @@ export function mountPlan(canvas) {
       ctx.lineWidth = (selected ? 2.6 : 1.8) / camera.scale;
       ctx.fillRect(core.x, core.y, core.w, core.d);
       ctx.strokeRect(core.x, core.y, core.w, core.d);
+      const interior = core.interior || (stair
+        ? stairCoreInterior(core, core.doorSide || pickCoreDoorSide(core, state.aisles, state.plate?.blockRects))
+        : coreInterior(core, core.doorSide || pickCoreDoorSide(core, state.aisles, state.plate?.blockRects)));
+      if (interior) drawCoreInterior(ctx, interior, camera.scale);
       const name = stair
         ? `계단 ${stairNo}`
         : (building ? building.name : `코어 ${index + 1}`);
@@ -348,13 +355,23 @@ export function mountPlan(canvas) {
 
     const rampHit = hitRampDetail(world);
     if (rampHit && state.tool !== "entrance" && state.tool !== "exit") {
+      if (rampHit.lower) {
+        selectItem({ type: "lowerRamp", id: rampHit.groundId });
+        drag = { mode: "lowerRamp", groundId: rampHit.groundId, edge: rampHit.ramp.edge };
+        canvas.setPointerCapture(event.pointerId);
+        return;
+      }
       selectItem({ type: "ramp", id: rampHit.id, module: rampHit.module });
       const r = rampHit.ramp;
-      // 외곽 회전·외부형·모듈 사슬은 이격 띠까지 자유 이동
+      // 외부·모듈·외곽 진입은 이격 띠까지 자유 이동
       const free = Boolean(
         r?.modules?.length
         || r?.form === "spiral"
+        || r?.form === "outer9090"
+        || r?.form === "outer180"
         || state.rampForm === "spiral"
+        || state.rampForm === "outer9090"
+        || state.rampForm === "outer180"
         || (r?.placement || state.rampPlacement) === "external",
       );
       if (free) {
@@ -440,12 +457,20 @@ export function mountPlan(canvas) {
       if (!current) return;
       moveRamp(drag.id, edge ? edge.edge : current.edge, edge ? edge.t : projectAlong(current.edge, world));
     }
+    if (drag.mode === "lowerRamp") {
+      const hit = pickEdge(world, state.plate) || { edge: drag.edge, t: projectAlong(drag.edge, world) };
+      moveLowerRamp(drag.groundId, hit.edge || drag.edge, hit.t, { live: true });
+    }
   });
 
   canvas.addEventListener("pointerup", () => {
     if (drag?.mode === "rampFree") {
       const cur = state.ramps.find((item) => item.id === drag.id);
       if (cur) moveRampFree(drag.id, cur.x, cur.y, { live: false });
+    }
+    if (drag?.mode === "lowerRamp" && drag.groundId != null) {
+      const ov = state.lowerRampOverrides?.[drag.groundId];
+      if (ov) moveLowerRamp(drag.groundId, ov.edge || drag.edge, ov.t, { live: false });
     }
     if (drag?.mode === "plateVertex" && state.parkPolygon?.length >= 3) {
       setParkPolygon(state.parkPolygon);
@@ -544,8 +569,17 @@ export function mountPlan(canvas) {
 
   const observer = new ResizeObserver(resize);
   observer.observe(canvas);
+  // 스테이지(plan-view) 크기 변화도 잡아 램프 단계 확장 직후 맞춤이 빠지지 않게 한다.
+  const host = canvas.parentElement;
+  if (host) observer.observe(host);
   subscribe(draw);
   resize();
+}
+
+/** 다음 그리기에서 카메라 맞춤을 다시 계산한다(마법사 확장·탭 전환 후). */
+export function invalidatePlanFit() {
+  fittedKey = "";
+  requestDraw();
 }
 
 function viewBounds() {
@@ -687,6 +721,22 @@ function hitRamp(point) {
 
 function hitRampDetail(point) {
   if (!state.plate) return null;
+  // 층간 램프(초록 점선) 먼저 — 출입과 독립 선택
+  const lowerMode = state.lowerRampMode || "alternate";
+  const lowers = rampsForLevel(state.ramps, state.plate, 1, lowerMode, state.lowerRampOverrides);
+  for (const ramp of lowers) {
+    const shape = rampShape(ramp, state.plate);
+    const box = shape.footprint || rampFootprint(ramp, state.plate);
+    if (box && hit(point, box)) {
+      return {
+        id: ramp.id,
+        ramp,
+        module: null,
+        lower: true,
+        groundId: ramp.groundId ?? (Number(ramp.id) - 1000),
+      };
+    }
+  }
   for (const ramp of state.ramps) {
     if (ramp.modules?.length) {
       const chain = buildChain(ramp);
@@ -1030,6 +1080,67 @@ function offsetOutwardApprox(poly, dist) {
 function fmtM(v) {
   const n = Number(v);
   return `${Number.isInteger(n) ? n : n.toFixed(1)}m`;
+}
+
+/** 코어 내부 승강기·계단·전실·출입문 표시. */
+function drawCoreInterior(ctx, interior, scale) {
+  if (!interior) return;
+  const lw = 1.1 / (scale || 12);
+  if (interior.lobby) {
+    ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.fillRect(interior.lobby.x, interior.lobby.y, interior.lobby.w, interior.lobby.d);
+  }
+  (interior.elevators || []).forEach((el) => {
+    ctx.fillStyle = "rgba(30, 30, 30, 0.55)";
+    ctx.strokeStyle = "#1a1a1a";
+    ctx.lineWidth = lw;
+    ctx.fillRect(el.x, el.y, el.w, el.d);
+    ctx.strokeRect(el.x, el.y, el.w, el.d);
+    // 카 문 힌트
+    ctx.strokeStyle = "#94a3b8";
+    ctx.beginPath();
+    ctx.moveTo(el.x + el.w * 0.15, el.y + el.d * 0.08);
+    ctx.lineTo(el.x + el.w * 0.85, el.y + el.d * 0.08);
+    ctx.stroke();
+    label(ctx, el.label || "EL", el.x + el.w / 2, el.y + el.d / 2, "#f8fafc");
+  });
+  if (interior.stair) {
+    const st = interior.stair;
+    ctx.fillStyle = "rgba(100, 116, 139, 0.25)";
+    ctx.strokeStyle = "#475569";
+    ctx.lineWidth = lw;
+    ctx.fillRect(st.x, st.y, st.w, st.d);
+    ctx.strokeRect(st.x, st.y, st.w, st.d);
+    const steps = 5;
+    ctx.strokeStyle = "#64748b";
+    for (let i = 1; i < steps; i += 1) {
+      const t = i / steps;
+      ctx.beginPath();
+      if (st.w >= st.d) {
+        ctx.moveTo(st.x + st.w * t, st.y);
+        ctx.lineTo(st.x + st.w * t, st.y + st.d);
+      } else {
+        ctx.moveTo(st.x, st.y + st.d * t);
+        ctx.lineTo(st.x + st.w, st.y + st.d * t);
+      }
+      ctx.stroke();
+    }
+    label(ctx, "계단", st.x + st.w / 2, st.y + st.d / 2, "#334155");
+  }
+  if (interior.door) {
+    const d = interior.door;
+    ctx.strokeStyle = "#0f766e";
+    ctx.lineWidth = 2.4 / (scale || 12);
+    ctx.beginPath();
+    if (d.w >= d.d) {
+      ctx.moveTo(d.x, d.y + d.d / 2);
+      ctx.lineTo(d.x + d.w, d.y + d.d / 2);
+    } else {
+      ctx.moveTo(d.x + d.w / 2, d.y);
+      ctx.lineTo(d.x + d.w / 2, d.y + d.d);
+    }
+    ctx.stroke();
+  }
 }
 
 function overlayImage() {

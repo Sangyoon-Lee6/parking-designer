@@ -1,8 +1,12 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=282";
+import {
+  CLEAR_HEIGHT, CURB_H, CURB_W, FLOOR_H, LINE_W, WALL_T,
+  coreInterior, pickCoreDoorSide, rampFootprint, rampShape, rampsForLevel,
+  siteMarginsOf, stairCoreInterior,
+} from "./layout.js?v=295";
 import { analyzeOnPlate, rampMesh, slopePlan } from "./rampModules.js?v=282";
-import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=282";
+import { isLegacyEquivalent, state, subscribe, summary } from "./state.js?v=295";
 
 const DRAW_CAP = 12;
 let renderer;
@@ -18,7 +22,7 @@ export function mountScene(container) {
   scene = new THREE.Scene();
   scene.background = new THREE.Color("#ddd6cb");
   camera = new THREE.PerspectiveCamera(42, 1, 0.1, 800);
-  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
   container.appendChild(renderer.domElement);
@@ -42,51 +46,113 @@ export function mountScene(container) {
   building = new THREE.Group();
   scene.add(building);
 
+  let lastSizeOk = false;
+  const paintOnce = () => {
+    if (!renderer || !scene || !camera) return;
+    controls.update();
+    renderer.render(scene, camera);
+  };
   const resize = () => {
     const rect = container.getBoundingClientRect();
-    camera.aspect = rect.width / Math.max(rect.height, 1);
+    // flex 자식이 잠시 0이면 부모 scene-view 크기로 폴백
+    const parent = container.parentElement;
+    const pref = parent && parent.getBoundingClientRect();
+    const w = Math.max(rect.width, pref?.width || 0, 2);
+    const h = Math.max(rect.height, pref?.height || 0, 2);
+    const ok = w > 4 && h > 4;
+    camera.aspect = w / Math.max(h, 1);
     camera.updateProjectionMatrix();
-    renderer.setSize(rect.width, rect.height, false);
+    // updateStyle=true: CSS 픽셀 크기도 맞춰 0×0 표시를 막는다
+    renderer.setSize(w, h, true);
+    renderer.domElement.style.width = `${w}px`;
+    renderer.domElement.style.height = `${h}px`;
+    renderer.domElement.style.display = "block";
+    lastSizeOk = ok;
+    return ok;
   };
-  new ResizeObserver(resize).observe(container);
+  const tryBuild = (attempt = 0) => {
+    if (state.resultTab !== "model") return;
+    const ok = resize();
+    if (!ok && attempt < 20) {
+      requestAnimationFrame(() => tryBuild(attempt + 1));
+      return;
+    }
+    try {
+      rebuild(sun);
+      paintOnce();
+    } catch (err) {
+      signature = ""; // 실패 시 재시도 가능하게
+      console.error("3D rebuild failed", err);
+      paintOnce();
+      const box = document.getElementById("step2-error");
+      if (box) {
+        box.hidden = false;
+        box.textContent = `3D 모델 생성 오류: ${err && err.message ? err.message : err}`;
+      }
+    }
+  };
+  new ResizeObserver(() => {
+    const wasOk = lastSizeOk;
+    const ok = resize();
+    // 0×0 → 실제 크기로 바뀌면 카메라를 다시 잡는다
+    if (ok && !wasOk && state.resultTab === "model") {
+      signature = "";
+      tryBuild(0);
+    } else if (ok) {
+      paintOnce();
+    }
+  }).observe(container);
   resize();
+  // 마운트 직후 빈 씬이라도 배경색이 보이게 한 프레임 그림 (회색 scene-root만 보이는 상태 방지)
+  renderer.setClearColor(0xddd6cb, 1);
+  paintOnce();
+
+  const sceneView = () => document.getElementById("scene-view");
+  const sceneVisible = () => {
+    const view = sceneView();
+    return Boolean(view && !view.hidden && state.resultTab === "model");
+  };
 
   subscribe(() => {
-    if (state.step !== 3) return;
-    requestAnimationFrame(() => {
-      resize();
-      try {
-        rebuild(sun);
-      } catch (err) {
-        console.error("3D rebuild failed", err);
-        const box = document.getElementById("step2-error");
-        if (box) {
-          box.hidden = false;
-          box.textContent = `3D 모델 생성 오류: ${err && err.message ? err.message : err}`;
-        }
-      }
-    });
+    if (state.resultTab !== "model") return;
+    // 레이아웃 확정 후 빌드 (hidden→show 직후 0×0 방지)
+    requestAnimationFrame(() => requestAnimationFrame(() => tryBuild(0)));
   });
 
   const loop = () => {
     frame = requestAnimationFrame(loop);
-    if (!container.hidden && state.step === 3) {
+    if (sceneVisible()) {
       controls.update();
       renderer.render(scene, camera);
     }
   };
   loop();
 
-  document.getElementById("reset-camera").addEventListener("click", () => {
-    signature = "";
-    if (state.step === 3) rebuild(sun);
-  });
+  const resetBtn = document.getElementById("reset-camera");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      signature = "";
+      tryBuild(0);
+    });
+  }
+
+  // open3d에서 강제 재빌드할 때 사용
+  return {
+    forceRebuild: () => { signature = ""; tryBuild(0); },
+    resize,
+    hasCanvas: () => Boolean(renderer?.domElement?.parentElement),
+    canvasSize: () => {
+      const el = renderer?.domElement;
+      if (!el) return { w: 0, h: 0 };
+      return { w: el.width || 0, h: el.height || 0 };
+    },
+  };
 }
 
 const paint = makePaint();
 
 function rebuild(sun) {
-  if (!state.plate) return;
+  if (!state.plate || !building || !camera || !controls) return;
   const info = summary();
   const floors = Math.max(1, info.floors);
   const drawn = Math.min(floors, DRAW_CAP);
@@ -107,7 +173,6 @@ function rebuild(sun) {
     floorView: state.floorView,
   });
   const keepCamera = signature === next;
-  signature = next;
   host = building;
   clearGroup(building);
 
@@ -136,35 +201,45 @@ function rebuild(sun) {
     const floor = new THREE.Group();
     building.add(floor);
     host = floor;
-    addSlab(plate, base, concrete);
-    addAisles(base, aisleMat);
-    addStallPads(base, stallMats);
-    host.add(stallLines(base, lineMat));
-    addArrows(base);
-    state.columns.forEach((column, index) => addColumn(column, index, base, columnMat, hazard));
-    addClearance(base);
-    state.cores.forEach((core) => addCore(core, coreMat, base));
-    // B1(level 0): 지상→지하 진입 램프. B2+(level≥1): 층간 다른 경로(기본 alternate).
-    const levelRamps = rampsForLevel(
-      state.ramps,
-      plate,
-      level,
-      state.lowerRampMode || (plate && plate.lowerRampMode) || "alternate",
-    );
-    levelRamps.forEach((ramp) => {
-      if (ramp.modules?.length && !isLegacyEquivalent(ramp, plate)) {
-        addModuleRamp(ramp, rampMat, base, hazard, level);
-      } else {
-        addRamp(ramp, rampMat, base, hazard);
-      }
-    });
-    addSiteSetback(base);
-    addWalls(concrete, base);
-    addGates(base);
-    state.openings.forEach((opening) => {
-      addThreshold(opening, opening.kind === "in" ? inMat : outMat, base);
-    });
-    addLabel(`B${level + 1}`, plate.width / 2, base + 1.2, -2.2, 6.4);
+    try {
+      addSlab(plate, base, concrete);
+      addAisles(base, aisleMat);
+      addStallPads(base, stallMats);
+      host.add(stallLines(base, lineMat));
+      addArrows(base);
+      state.columns.forEach((column, index) => addColumn(column, index, base, columnMat, hazard));
+      addClearance(base);
+      state.cores.forEach((core) => addCore(core, coreMat, base));
+      // B1(level 0): 지상→지하 진입 램프. B2+(level≥1): 층간 다른 경로(기본 alternate).
+      const levelRamps = rampsForLevel(
+        state.ramps,
+        plate,
+        level,
+        state.lowerRampMode || (plate && plate.lowerRampMode) || "alternate",
+        state.lowerRampOverrides,
+      );
+      levelRamps.forEach((ramp) => {
+        try {
+          if (ramp.modules?.length && !isLegacyEquivalent(ramp, plate)) {
+            addModuleRamp(ramp, rampMat, base, hazard, level);
+          } else {
+            addRamp(ramp, rampMat, base, hazard);
+          }
+        } catch (rampErr) {
+          console.warn("3D ramp skip", level, rampErr);
+        }
+      });
+      addSiteSetback(base);
+      addWalls(concrete, base);
+      addGates(base);
+      state.openings.forEach((opening) => {
+        addThreshold(opening, opening.kind === "in" ? inMat : outMat, base);
+      });
+      addLabel(`B${level + 1}`, plate.width / 2, base + 1.2, -2.2, 6.4);
+    } catch (levelErr) {
+      console.warn("3D floor skip", level, levelErr);
+      addLabel(`B${level + 1}?`, plate.width / 2, base + 1.2, -2.2, 6.4);
+    }
   });
 
   host = building;
@@ -178,7 +253,14 @@ function rebuild(sun) {
 
   const stack = single ? 1 : drawn;
   const rampReach = state.ramps.reduce((reach, ramp) => {
-    const box = rampFootprint(ramp, plate);
+    let box;
+    try {
+      const shape = rampShape(ramp, plate);
+      box = shape.footprint || rampFootprint(ramp, plate);
+    } catch (e) {
+      box = rampFootprint(ramp, plate);
+    }
+    if (!box || !Number.isFinite(box.x) || !Number.isFinite(box.y)) return reach;
     return Math.max(reach, Math.max(0, -box.x), Math.max(0, -box.y), Math.max(0, box.x + box.w - plate.width), Math.max(0, box.y + box.d - plate.depth));
   }, 0);
   const siteM = siteMarginsOf({
@@ -187,7 +269,8 @@ function rebuild(sun) {
     siteMargins: plate.siteMargins || state.siteMargins,
   });
   const marginReach = Math.max(siteM.n || 0, siteM.s || 0, siteM.e || 0, siteM.w || 0, rampReach);
-  const span = Math.max(plate.width + marginReach, plate.depth + marginReach, stack * FLOOR_H, towerH + FLOOR_H);
+  let span = Math.max(plate.width + marginReach, plate.depth + marginReach, stack * FLOOR_H, towerH + FLOOR_H, 20);
+  if (!Number.isFinite(span) || span < 1) span = Math.max(plate.width || 40, plate.depth || 40, 20);
   sun.position.set(-plate.width * 0.2, span, plate.depth * 0.2);
   sun.target.position.set(plate.width / 2, single ? 1 : -drawn * FLOOR_H / 2, plate.depth / 2);
   sun.shadow.camera.left = -span;
@@ -198,13 +281,26 @@ function rebuild(sun) {
   sun.shadow.camera.far = span * 4;
   sun.shadow.camera.updateProjectionMatrix();
 
+  // 대형 평면·다층에서 기본 far=800이면 모델이 잘려 빈 화면처럼 보인다
+  const camFar = Math.max(800, span * 8, 2000);
+  camera.near = 0.5;
+  camera.far = camFar;
+  camera.updateProjectionMatrix();
+
   if (!keepCamera) {
     const center = new THREE.Vector3(plate.width / 2, single ? 1.2 : -((drawn - 1) * FLOOR_H) / 2, plate.depth / 2);
     const dist = towerH > 0 ? 1.25 : 1;
-    camera.position.set(center.x + plate.width * 0.9 * dist, center.y + span * 0.42 * dist, center.z + plate.depth * 1.05 * dist);
-    controls.target.copy(center);
-    controls.update();
+    const cx = center.x + plate.width * 0.9 * dist;
+    const cy = center.y + span * 0.42 * dist;
+    const cz = center.z + plate.depth * 1.05 * dist;
+    if (Number.isFinite(cx) && Number.isFinite(cy) && Number.isFinite(cz)) {
+      camera.position.set(cx, cy, cz);
+      controls.target.copy(center);
+      controls.update();
+    }
   }
+  // 성공한 뒤에만 signature 고정 — 중간에 throw 나면 재시도 가능
+  signature = next;
 }
 
 /** 지상선 위 반투명 타워 매스. B1·전체 층 보기일 때만. 반환: 최고 타워 높이(m). */
@@ -260,7 +356,18 @@ function addSlab(plate, base, material) {
     path.lineTo(hole.x, hole.y);
     shape.holes.push(path);
   });
-  const geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.28, bevelEnabled: false });
+  let geometry;
+  try {
+    geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.28, bevelEnabled: false });
+  } catch (e) {
+    // hole 퇴화 등으로 Extrude 실패 시 단순 박스 슬래브
+    geometry = new THREE.BoxGeometry(plate.width, 0.28, plate.depth);
+    const slab = new THREE.Mesh(geometry, material);
+    slab.position.set(plate.width / 2, base - 0.14, plate.depth / 2);
+    slab.receiveShadow = true;
+    host.add(slab);
+    return;
+  }
   geometry.rotateX(Math.PI / 2);
   const slab = new THREE.Mesh(geometry, material);
   slab.position.set(0, base, 0);
@@ -344,27 +451,81 @@ function strip(group, geometry, material, x, y, z, sx, sz) {
 function addCore(core, material, base) {
   const t = WALL_T;
   const h = FLOOR_H - 0.05;
-  const door = 1.1;
-  wallBox(core.x + core.w / 2, base, core.y + core.d - t / 2, core.w, t, material, h);
-  wallBox(core.x + t / 2, base, core.y + core.d / 2, t, core.d, material, h);
-  wallBox(core.x + core.w - t / 2, base, core.y + core.d / 2, t, core.d, material, h);
-  const gap = Math.min(door, core.w * 0.34);
-  const left = (core.w - gap) / 2;
-  if (left > 0.2) {
-    wallBox(core.x + left / 2, base, core.y + t / 2, left, t, material, h);
-    wallBox(core.x + core.w - left / 2, base, core.y + t / 2, left, t, material, h);
+  const doorSide = core.doorSide || pickCoreDoorSide(core, state.aisles, state.plate?.blockRects);
+  const interior = core.interior || ((core.kind === "stair")
+    ? stairCoreInterior(core, doorSide)
+    : coreInterior(core, doorSide));
+  const doorW = interior?.door
+    ? Math.max(interior.door.w, interior.door.d)
+    : Math.min(1.2, Math.min(core.w, core.d) * 0.34);
+
+  // 네 벽 — 출입문 면만 개구
+  const walls = [
+    { side: "n", x: core.x + core.w / 2, z: core.y + core.d - t / 2, sx: core.w, sz: t },
+    { side: "s", x: core.x + core.w / 2, z: core.y + t / 2, sx: core.w, sz: t },
+    { side: "w", x: core.x + t / 2, z: core.y + core.d / 2, sx: t, sz: core.d },
+    { side: "e", x: core.x + core.w - t / 2, z: core.y + core.d / 2, sx: t, sz: core.d },
+  ];
+  walls.forEach((w) => {
+    if (w.side !== doorSide) {
+      wallBox(w.x, base, w.z, w.sx, w.sz, material, h);
+      return;
+    }
+    // 출입문 개구: 좌우(또는 상하) 벽 조각
+    if (doorSide === "n" || doorSide === "s") {
+      const gap = Math.min(doorW, core.w * 0.4);
+      const left = (core.w - gap) / 2;
+      if (left > 0.15) {
+        wallBox(core.x + left / 2, base, w.z, left, t, material, h);
+        wallBox(core.x + core.w - left / 2, base, w.z, left, t, material, h);
+      }
+      const zDoor = doorSide === "s" ? core.y + 0.1 : core.y + core.d - 0.1;
+      const frame = standard("#2b2a28", 0.5);
+      const doorMat = standard("#3d4a43", 0.55);
+      wallBox(core.x + core.w / 2, base, zDoor, gap + 0.16, 0.08, frame, 2.15);
+      wallBox(core.x + core.w / 2 - gap * 0.22, base, zDoor + (doorSide === "s" ? 0.04 : -0.04), gap * 0.42, 0.04, doorMat, 2.05);
+      wallBox(core.x + core.w / 2 + gap * 0.22, base, zDoor + (doorSide === "s" ? 0.04 : -0.04), gap * 0.42, 0.04, doorMat, 2.05);
+    } else {
+      const gap = Math.min(doorW, core.d * 0.4);
+      const low = (core.d - gap) / 2;
+      if (low > 0.15) {
+        wallBox(w.x, base, core.y + low / 2, t, low, material, h);
+        wallBox(w.x, base, core.y + core.d - low / 2, t, low, material, h);
+      }
+      const xDoor = doorSide === "w" ? core.x + 0.1 : core.x + core.w - 0.1;
+      const frame = standard("#2b2a28", 0.5);
+      const doorMat = standard("#3d4a43", 0.55);
+      wallBox(xDoor, base, core.y + core.d / 2, 0.08, gap + 0.16, frame, 2.15);
+      wallBox(xDoor + (doorSide === "w" ? 0.04 : -0.04), base, core.y + core.d / 2 - gap * 0.22, 0.04, gap * 0.42, doorMat, 2.05);
+      wallBox(xDoor + (doorSide === "w" ? 0.04 : -0.04), base, core.y + core.d / 2 + gap * 0.22, 0.04, gap * 0.42, doorMat, 2.05);
+    }
+  });
+
+  const cabin = standard("#1c1c1c", 0.45);
+  const shaft = standard("#4b5563", 0.55);
+  const stairMat = standard("#94a3b8", 0.5);
+  (interior?.elevators || []).forEach((el) => {
+    wallBox(el.x + el.w / 2, base, el.y + el.d / 2, el.w, el.d, shaft, h * 0.98);
+    wallBox(el.x + el.w / 2, base, el.y + el.d / 2, Math.max(0.6, el.w - 0.35), Math.max(0.5, el.d - 0.35), cabin, 2.15);
+    addLabel(el.label || "EL", el.x + el.w / 2, base + h + 0.1, el.y + el.d / 2, 1.8);
+  });
+  if (interior?.stair) {
+    const st = interior.stair;
+    wallBox(st.x + st.w / 2, base, st.y + st.d / 2, st.w, st.d, stairMat, 0.18);
+    const steps = 6;
+    for (let i = 0; i < steps; i += 1) {
+      const t0 = i / steps;
+      const t1 = (i + 1) / steps;
+      if (st.w >= st.d) {
+        wallBox(st.x + st.w * (t0 + t1) / 2, base + 0.12 + i * 0.22, st.y + st.d / 2, st.w / steps - 0.02, st.d * 0.9, stairMat, 0.2);
+      } else {
+        wallBox(st.x + st.w / 2, base + 0.12 + i * 0.22, st.y + st.d * (t0 + t1) / 2, st.w * 0.9, st.d / steps - 0.02, stairMat, 0.2);
+      }
+    }
+    addLabel("계단", st.x + st.w / 2, base + h + 0.1, st.y + st.d / 2, 1.8);
   }
-  const frame = standard("#2b2a28", 0.5);
-  wallBox(core.x + core.w / 2, base, core.y + 0.08, gap + 0.16, 0.08, frame, 2.15);
-  const doorMat = standard("#3d4a43", 0.55);
-  wallBox(core.x + core.w / 2, base, core.y + 0.12, gap * 0.46, 0.04, doorMat, 2.05);
-  wallBox(core.x + core.w / 2 + gap * 0.26, base, core.y + 0.16, gap * 0.42, 0.04, doorMat, 2.05);
-  wallBox(core.x + core.w * 0.34, base, core.y + core.d / 2, t, core.d - t * 2, material, h);
-  wallBox(core.x + core.w * 0.67, base, core.y + core.d / 2, t, core.d - t * 2, material, h);
-  const cabin = standard("#1c1c1c", 0.4);
-  wallBox(core.x + core.w * 0.17, base, core.y + core.d * 0.55, 0.9, 0.08, cabin, 2.1);
-  wallBox(core.x + core.w * 0.5, base, core.y + core.d * 0.55, 0.9, 0.08, cabin, 2.1);
-  addLabel("비상구", core.x + core.w / 2, base + h + 0.15, core.y + core.d / 2, 2.4);
+  const labelText = core.kind === "stair" ? "피난계단" : "코어";
+  addLabel(labelText, core.x + core.w / 2, base + h + 0.2, core.y + core.d / 2, 2.2);
 }
 
 function addRamp(ramp, material, base, hazard) {
@@ -373,18 +534,30 @@ function addRamp(ramp, material, base, hazard) {
   const footprint = shape.footprint || rampFootprint(ramp, plate);
   const H = FLOOR_H;
   // path에 하강 h가 있으면 리본 메시로 그린다(곡선·원형·직선 공통).
-  if (shape.path && shape.path.length >= 2 && shape.path.some((p) => p.h != null)) {
+  const curved = shape.path && shape.path.length >= 2 && shape.path.some((p) => p.h != null)
+    && (shape.kind === "curved" || shape.kind === "spiral" || shape.outerKind || shape.externalCurve);
+  const hasPath = shape.path && shape.path.length >= 2 && shape.path.some((p) => p.h != null);
+  if (hasPath) {
     addRampRibbon(shape, ramp, material, base, H);
   } else {
     addRampQuad(ramp, footprint, material, base, H);
   }
-  addRampEdges(ramp, footprint, base, hazard);
+  // 곡선·외곽 램프는 AABB 연석이 부채꼴/상자 벽을 만들므로 경로 리본 치마만 쓴다.
+  if (!curved) addRampEdges(ramp, footprint, base, hazard);
 }
 
 /** 모듈 사슬 램프: rampMesh 삼각형을 BufferGeometry로. */
 function addModuleRamp(ramp, material, base, hazard, level = 0) {
   const plate = state.plate;
   const H = FLOOR_H;
+  // 외곽·곡선 형태는 legacy path 리본이 맞고, 직선 모듈 사슬로 그리면 팬/어긋난 메시가 된다.
+  const form = ramp.form || plate?.rampForm || "";
+  // 외곽·곡선 형태는 shape.path 리본이 정답. 직선 모듈 사슬로 그리면 어긋나거나 팬처럼 보인다.
+  const preferShape = form === "spiral" || form === "outer180" || form === "outer9090" || form === "curve90";
+  if (preferShape || isLegacyEquivalent(ramp, plate)) {
+    addRamp(ramp, material, base, hazard);
+    return;
+  }
   const legal = Number(plate.legalStalls) || Number(plate.stallRules?.legalStalls) || 0;
   const plan = slopePlan(ramp, { floorHeight: H, legalStalls: legal });
   // groundY: 이 층 슬래브 위가 램프 시작 높이. rampMesh는 top - k*H.
@@ -409,32 +582,87 @@ function addModuleRamp(ramp, material, base, hazard, level = 0) {
   // 외부 연결 개구부는 addWalls cuts가 edge/t를 씀(applyPlateMeta로 맞춤)
 }
 
-/** 중심선 path(x,y,h)를 따라 폭 있는 경사 리본. */
+/**
+ * 중심선 path(x,y,h)를 따라 폭·두께 있는 경사 리본.
+ * 구간마다 독립 법선으로 삼각형을 붙이면 곡선에서 부채꼴 팬이 생기므로,
+ * 접선 평균 오프셋 + 공유 정점 + 슬래브 두께로 통로처럼 그린다.
+ */
 function addRampRibbon(shape, ramp, material, base, H) {
-  const path = shape.path;
-  const half = Math.max(3, (ramp.width || shape.width || 6) / 2);
+  const raw = shape.path || [];
+  // XY 중복·극소 구간 제거(수직으로만 떨어지는 끝점 포함)
+  const path = [];
+  raw.forEach((p) => {
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+    const prev = path[path.length - 1];
+    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < 0.08) {
+      // 같은 자리 높이만 갱신
+      if (p.h != null) prev.h = p.h;
+      return;
+    }
+    path.push({ x: p.x, y: p.y, h: p.h == null ? (prev ? prev.h : 0) : p.h });
+  });
+  if (path.length < 2) return;
+
+  const laneW = Number(shape.width) || Number(ramp.width) || 6;
+  const half = Math.min(Math.max(laneW, 6) / 2, 4.0); // 차로 폭의 절반, 곡선 안쪽이 접히지 않게 상한
+  const thick = 0.22;
+  const wallH = 0.55;
+
+  // 각 점에서 접선→수평 법선 (끝점은 이웃 한쪽)
+  const frames = path.map((p, i) => {
+    const a = path[Math.max(0, i - 1)];
+    const b = path[Math.min(path.length - 1, i + 1)];
+    let tx = b.x - a.x;
+    let tz = b.y - a.y;
+    let len = Math.hypot(tx, tz);
+    if (len < 1e-6) {
+      const j = Math.min(path.length - 1, i + 1);
+      const k = Math.max(0, i - 1);
+      tx = path[j].x - path[k].x;
+      tz = path[j].y - path[k].y;
+      len = Math.hypot(tx, tz) || 1;
+    }
+    tx /= len;
+    tz /= len;
+    const y = base + H - Math.max(0, Math.min(H, Number(p.h) || 0));
+    return {
+      cx: p.x,
+      cz: p.y,
+      y,
+      nx: -tz,
+      nz: tx,
+    };
+  });
+
   const positions = [];
   const pushTri = (a, b, c) => {
     positions.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
   };
-  for (let i = 0; i < path.length - 1; i += 1) {
-    const p0 = path[i];
-    const p1 = path[i + 1];
-    const dx = p1.x - p0.x;
-    const dz = p1.y - p0.y;
-    const len = Math.hypot(dx, dz);
-    if (len < 0.08) continue; // 모서리 중복점으로 생기는 팬/겹침 메시 방지
-    const nx = (-dz / len) * half;
-    const nz = (dx / len) * half;
-    const y0 = base + H - (p0.h == null ? 0 : p0.h);
-    const y1 = base + H - (p1.h == null ? H : p1.h);
-    const a = [p0.x + nx, y0, p0.y + nz];
-    const b = [p0.x - nx, y0, p0.y - nz];
-    const c = [p1.x - nx, y1, p1.y - nz];
-    const d = [p1.x + nx, y1, p1.y + nz];
-    pushTri(a, b, c);
-    pushTri(a, c, d);
+  const left = (f) => [f.cx + f.nx * half, f.y, f.cz + f.nz * half];
+  const right = (f) => [f.cx - f.nx * half, f.y, f.cz - f.nz * half];
+  const down = (v) => [v[0], v[1] - thick, v[2]];
+  const up = (v, h) => [v[0], v[1] + h, v[2]];
+
+  for (let i = 0; i < frames.length - 1; i += 1) {
+    const f0 = frames[i];
+    const f1 = frames[i + 1];
+    const l0 = left(f0);
+    const r0 = right(f0);
+    const l1 = left(f1);
+    const r1 = right(f1);
+    // 윗면
+    pushTri(l0, r0, r1);
+    pushTri(l0, r1, l1);
+    // 아랫면(두께)
+    pushTri(down(r0), down(l0), down(l1));
+    pushTri(down(r0), down(l1), down(r1));
+    // 측면 치마(얇은 벽) — AABB 연석 대신 경로를 따라감
+    pushTri(l0, l1, up(l1, wallH));
+    pushTri(l0, up(l1, wallH), up(l0, wallH));
+    pushTri(r1, r0, up(r0, wallH));
+    pushTri(r1, up(r0, wallH), up(r1, wallH));
   }
+
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
   geometry.computeVertexNormals();

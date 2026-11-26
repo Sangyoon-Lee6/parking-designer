@@ -1,19 +1,19 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=284";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=295";
 import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=282";
-import { drawThumb, mountPlan } from "./plan.js?v=284";
+import { drawThumb, invalidatePlanFit, mountPlan } from "./plan.js?v=295";
 import { stallRuleTargets } from "./stallTypes.js?v=282";
 import {
   plateDimsFromPolygon, presetChamferRect, presetL, presetTrapezoid, presetU,
   rectPolygon, validatePolygon, normalizePolygon, offsetPolygon, polygonArea, edgeLengths,
 } from "./polygon.js?v=282";
 import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=282";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=284";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, pinLowerRampOverrides, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState, rebuildLayout } from "./state.js?v=295";
 
 // 시트·DXF·주변지도는 클릭 시에만 불러 초기 로딩을 줄인다.
 let sheetMod = null;
 let dxfMod = null;
 let contextMod = null;
-const loadSheet = () => (sheetMod ||= import("./sheet.js?v=282"));
+const loadSheet = () => (sheetMod ||= import("./sheet.js?v=295"));
 const loadDxf = () => (dxfMod ||= import("./dxfExport.js?v=282"));
 const loadContext = () => (contextMod ||= import("./context.js?v=282"));
 async function closeContext() {
@@ -231,10 +231,24 @@ function renderRampPos() {
       ? `이 크기에서는 이 위치에 램프가 들어가지 않습니다(${why}). 자동이나 다른 위치를 고르세요.`
       : "";
 }
+/** 출입/층간 형태만 바꿀 때 — 셸 재생성 없이 화면만 갱신(층간 위치 유지). */
+function refreshRampFormsOnly() {
+  syncPlateMeta();
+  if (state.stalls?.length || state.variants?.length) {
+    optimizeLayout({ refresh: false });
+  } else {
+    // 셸: 코어가 새 램프 경로를 막지 않게 정리
+    rebuildLayout();
+  }
+  emit();
+  requestAnimationFrame(() => invalidatePlanFit());
+}
 $("ramp-form").addEventListener("change", () => {
+  // 출입 형태를 바꿔도 층간 위치가 따라가지 않도록 먼저 고정
+  pinLowerRampOverrides();
   state.rampForm = $("ramp-form").value;
-  // 외곽 회전은 건축선 밖(이격) 경로를 쓸 수 있게 외부형을 기본으로
-  if (state.rampForm === "spiral" && state.rampPlacement !== "external") {
+  const outerForms = ["outer9090", "outer180", "spiral"];
+  if (outerForms.includes(state.rampForm) && state.rampPlacement !== "external") {
     const margin = Math.max(
       Number(state.siteMargin) || 0,
       Number(state.siteMargins?.w) || 0,
@@ -253,7 +267,6 @@ $("ramp-form").addEventListener("change", () => {
       form: state.rampForm,
       placement: state.rampPlacement,
     };
-    // 형태가 바뀌면 모듈 사슬을 다시 맞춤
     delete next.modules;
     delete next.x;
     delete next.y;
@@ -261,30 +274,45 @@ $("ramp-form").addEventListener("change", () => {
     delete next.legacy;
     return next;
   });
-  syncPlateMeta();
-  if (state.plate) refreshPlateAfterOption();
-  else emit();
+  refreshRampFormsOnly();
 });
 $("lower-ramp-form").addEventListener("change", () => {
+  // 층간 형태만 변경 — 출입·층간 위치 유지
+  pinLowerRampOverrides();
   state.lowerRampForm = $("lower-ramp-form").value;
-  syncPlateMeta();
-  if (state.plate) refreshPlateAfterOption();
-  else emit();
+  const outerForms = ["outer9090", "outer180", "spiral"];
+  if (outerForms.includes(state.lowerRampForm)) {
+    Object.keys(state.lowerRampOverrides || {}).forEach((id) => {
+      state.lowerRampOverrides[id] = {
+        ...state.lowerRampOverrides[id],
+        placement: "external",
+      };
+    });
+    // 덮어쓰기가 아직 없으면 지금 고정본에 external 반영
+    pinLowerRampOverrides();
+    Object.keys(state.lowerRampOverrides || {}).forEach((id) => {
+      if (!state.lowerRampOverrides[id].placement) {
+        state.lowerRampOverrides[id].placement = "external";
+      }
+    });
+  }
+  refreshRampFormsOnly();
 });
 $("lower-ramp-mode").addEventListener("change", () => {
+  // 층간 위치 모드를 바꾸면 덮어쓰기 초기화 후 새 파생 위치 적용
   state.lowerRampMode = $("lower-ramp-mode").value;
-  syncPlateMeta();
-  if (state.plate) refreshPlateAfterOption();
-  else emit();
+  state.lowerRampOverrides = {};
+  refreshRampFormsOnly();
 });
 $("ramp-placement").addEventListener("change", () => {
+  pinLowerRampOverrides();
   state.rampPlacement = $("ramp-placement").value;
-  if (state.plate) {
-    state.plate = { ...state.plate, rampPlacement: state.rampPlacement };
-    refreshPlateAfterOption();
-  } else {
-    render();
-  }
+  state.ramps = (state.ramps || []).map((r) => ({
+    ...r,
+    placement: state.rampPlacement,
+  }));
+  if (state.plate) state.plate = { ...state.plate, rampPlacement: state.rampPlacement };
+  refreshRampFormsOnly();
 });
 $("entrance-mode").addEventListener("change", () => {
   state.entranceMode = $("entrance-mode").value;
@@ -707,7 +735,16 @@ $("remove-selected").addEventListener("click", removeSelection);
 $("to-3d").addEventListener("click", open3d);
 $("back-plan").addEventListener("click", () => { state.resultTab = "plan"; setWizard(7); });
 $("tab-model").addEventListener("click", async () => {
-  if (wizardSlide !== 8) setWizard(8);
+  if (wizardSlide !== 8) {
+    wizardSlide = 8;
+    document.body.dataset.wizard = "8";
+    document.querySelectorAll(".slide").forEach((slide) => {
+      const on = Number(slide.dataset.slide) === 8;
+      slide.hidden = !on;
+      slide.classList.toggle("on", on);
+    });
+    state.step = 3;
+  }
   if (!readyFor3d()) {
     state.resultTab = "plan";
     const { errors } = issueGroups();
@@ -718,7 +755,6 @@ $("tab-model").addEventListener("click", async () => {
     emit();
     return;
   }
-  state.resultTab = "model";
   await open3d();
 });
 $("tab-sheet").addEventListener("click", () => {
@@ -830,6 +866,7 @@ subscribe(() => { if (wizardSlide > 4 && !$("context-view").hidden) closeContext
 render();
 
 let sceneMount = null;
+let sceneApi = null;
 let playTimer = 0;
 let compareKey = "";
 
@@ -850,14 +887,31 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=282")
-      .then((module) => module.mountScene($("scene-root")))
+    sceneMount = import("./scene.js?v=295")
+      .then((module) => {
+        const root = $("scene-root");
+        if (!root) throw new Error("scene-root 없음");
+        sceneApi = module.mountScene(root);
+        return sceneApi;
+      })
       .catch((error) => {
         sceneMount = null;
+        sceneApi = null;
         throw error;
       });
   }
   return sceneMount;
+}
+
+function waitFrames(n = 1) {
+  return new Promise((resolve) => {
+    const step = () => {
+      n -= 1;
+      if (n <= 0) resolve();
+      else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
 }
 
 async function open3d() {
@@ -866,13 +920,31 @@ async function open3d() {
     $("step2-error").hidden = false;
     $("step2-error").textContent = errors.length
       ? `3D를 만들 수 없습니다: ${errors.join(" / ")}`
-      : "3D를 만들 수 없습니다. 램프·코어·동선을 확인하세요.";
+      : "3D를 만들 수 없습니다. 평면에서 주차 생성을 먼저 하세요(추천→결과).";
     return;
   }
+  // 이미 캔버스가 있으면 가볍게 리사이즈·재빌드만 (busy 오버레이 반복 방지)
+  const existing = sceneApi?.canvasSize?.() || { w: 0, h: 0 };
+  if (state.resultTab === "model" && sceneApi?.hasCanvas?.() && existing.w > 10 && existing.h > 10) {
+    $("scene-view").hidden = false;
+    $("plan-view").hidden = true;
+    $("sheet-view").hidden = true;
+    document.body.classList.add("step-result");
+    sceneApi.resize?.();
+    sceneApi.forceRebuild?.();
+    emit();
+    return;
+  }
+  const overlay = $("busy");
+  const busyText = $("busy-text");
   try {
-    await ensureScene();
     state.resultTab = "model";
     state.step = 3;
+    // 다층 「전체」는 첫 페인트가 오래 걸려 회색만 보이므로, 5층 이상은 B1부터
+    const floors = summary().floors || 1;
+    if (floors > 4 && state.floorView === "all") {
+      state.floorView = 0;
+    }
     if (wizardSlide !== 8) {
       wizardSlide = 8;
       document.body.dataset.wizard = "8";
@@ -882,12 +954,57 @@ async function open3d() {
         slide.classList.toggle("on", on);
       });
     }
+    // 뷰를 먼저 보이게 한 뒤 마운트·리사이즈 (hidden 0×0 캔버스 방지)
+    $("scene-view").hidden = false;
+    $("plan-view").hidden = true;
+    $("sheet-view").hidden = true;
+    document.body.classList.add("step-result");
+    const root = $("scene-root");
+    if (root) {
+      root.style.flex = "1 1 auto";
+      root.style.width = "100%";
+      root.style.minHeight = "320px";
+      root.style.height = "100%";
+      root.style.position = "relative";
+    }
+    if (overlay && busyText) {
+      busyText.textContent = "3D 모델 준비 중…";
+      overlay.hidden = false;
+      document.body.classList.add("is-busy");
+    }
+    // 레이아웃(절대 inset + flex)이 잡힐 때까지 몇 프레임 대기
+    await waitFrames(2);
+    await ensureScene();
+    // 캔버스가 없으면 재마운트
+    if (!sceneApi?.hasCanvas?.()) {
+      sceneMount = null;
+      sceneApi = null;
+      await ensureScene();
+    }
     emit();
+    await waitFrames(2);
+    sceneApi?.resize?.();
+    if (sceneApi?.forceRebuild) sceneApi.forceRebuild();
+    else $("reset-camera")?.click();
+    await waitFrames(2);
+    const size = sceneApi?.canvasSize?.() || { w: 0, h: 0 };
+    if (!(size.w > 10 && size.h > 10)) {
+      // 최종 폴백: 강제 재마운트
+      sceneMount = null;
+      sceneApi = null;
+      if (root) root.innerHTML = "";
+      await ensureScene();
+      sceneApi?.forceRebuild?.();
+      await waitFrames(2);
+    }
   } catch (error) {
     state.resultTab = "plan";
     $("step2-error").hidden = false;
     $("step2-error").textContent = `3D 모델을 불러오지 못했습니다: ${error && error.message ? error.message : error}`;
     emit();
+  } finally {
+    if (overlay) overlay.hidden = true;
+    document.body.classList.remove("is-busy");
   }
 }
 
@@ -1002,6 +1119,10 @@ function render() {
   document.body.dataset.wizard = String(wizardSlide);
   document.body.classList.toggle("plan-expanded", wizardSlide >= 5);
   document.body.classList.toggle("step-result", step === 3);
+  // 좌측 스테이지가 넓어진 뒤 평면도 카메라를 다시 가운데로
+  if (wizardSlide >= 5) {
+    requestAnimationFrame(() => requestAnimationFrame(() => invalidatePlanFit()));
+  }
   document.querySelectorAll("#wizard-steps li").forEach((item) => {
     const value = Number(item.dataset.slide);
     item.classList.toggle("on", value === wizardSlide);
@@ -1113,7 +1234,8 @@ function render() {
   if (document.activeElement !== $("lower-ramp-mode")) $("lower-ramp-mode").value = state.lowerRampMode || "alternate";
   if (document.activeElement !== $("road-edge")) $("road-edge").value = state.roadEdge;
   renderRampPos();
-  if ($("site-margin-row")) $("site-margin-row").hidden = state.rampPlacement !== "external";
+  // 이격은 4단계에서만 — 램프 단계 중복 입력 숨김 유지
+  if ($("site-margin-row")) $("site-margin-row").hidden = true;
   {
     const sm = state.siteMargins || {};
     const show = (k) => (sm[k] == null ? `${state.siteMargin}` : `${sm[k]}*`);
@@ -1153,10 +1275,19 @@ function render() {
   if (state.metrics && state.metrics.rampKind) {
     const ramp = state.ramps[0];
     const kind = state.metrics.rampKind;
-    const formName = (f) => (f === "spiral" ? "외곽 회전" : f === "curve90" ? "90° 곡선" : f === "straight" ? "직선" : f === "same" ? "지상과 같음" : "자동");
-    const formLabel = state.rampForm === "spiral" || kind === "spiral" ? "외곽 회전"
-      : kind === "curved" ? "직선+곡선 90°"
-        : "직선";
+    const formName = (f) => (
+      f === "outer9090" || f === "spiral" ? "90·직선·90"
+        : f === "outer180" ? "180° 나선"
+          : f === "curve90" ? "직선+90°"
+            : f === "straight" ? "직선"
+              : f === "same" ? "출입과 같음"
+                : "자동"
+    );
+    const formLabel = ["outer9090", "spiral"].includes(state.rampForm) || ["outer9090", "spiral"].includes(kind)
+      ? "90·직선·90"
+      : state.rampForm === "outer180" || kind === "outer180" ? "180° 나선"
+        : state.rampForm === "curve90" || kind === "curved" ? "직선+90°"
+          : "직선";
     rows.push(["지상→B1 램프", `${state.rampPlacement === "external" ? "외부" : "내부"} · ${formLabel} ${state.metrics.rampTotal || (ramp && ramp.length) || "—"}m`]);
     const lowerMode = state.lowerRampMode || "alternate";
     const lowerForm = state.lowerRampForm || "auto";
@@ -1260,27 +1391,33 @@ function render() {
   renderCompare();
   renderCorePick();
 
-  // 불가능한 배치 → 빨간 상자에 원인(3D 막힘), 가능하지만 알릴 것 → 노란 상자(3D 가능)
+  // 평면·칸·램프만 있으면 3D 가능. 동선·대지 문제는 경고로만 표시.
   // 5·6은 주차 생성 전 셸이라 이슈를 숨긴다(6→7에서 생성 후 표시).
   const { errors, warnings } = issueGroups();
   const listHtml = (items) => `<ul>${items.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>`;
   const hasParking = Boolean(state.stalls && state.stalls.length);
   const showIssues = wizardSlide >= 7 && wizardSlide <= 8 && state.plate && hasParking;
-  $("step2-error").hidden = !showIssues || errors.length === 0;
-  $("step2-error").innerHTML = errors.length ? `<strong>3D를 만들 수 없습니다 — 원인</strong>${listHtml(errors)}` : "";
-  $("step2-warn").hidden = !showIssues || warnings.length === 0;
-  $("step2-warn").innerHTML = warnings.length ? `<strong>주의 (3D는 만들 수 있음)</strong>${listHtml(warnings)}` : "";
-  // 평면 위 알림은 생성 전(5·6)에는 비움
+  const ready = readyFor3d();
+  // ready면 빨간「3D 불가」를 쓰지 않음 — 경고로만
+  const hardBlock = !ready && errors.length > 0;
+  $("step2-error").hidden = !showIssues || !hardBlock;
+  $("step2-error").innerHTML = hardBlock ? `<strong>3D를 만들 수 없습니다 — 원인</strong>${listHtml(errors)}` : "";
+  const warnItems = hardBlock ? warnings : errors.concat(warnings);
+  $("step2-warn").hidden = !showIssues || warnItems.length === 0;
+  $("step2-warn").innerHTML = warnItems.length
+    ? `<strong>${ready ? "주의 (3D 보기는 가능)" : "주의"}</strong>${listHtml(warnItems)}`
+    : "";
   const alert = $("plan-alert");
   const boxes = [];
-  if (showIssues && errors.length) boxes.push(`<div class="issue-box error"><strong>3D 불가 — 원인</strong>${listHtml(errors)}</div>`);
-  if (showIssues && warnings.length) boxes.push(`<div class="issue-box warn"><strong>주의</strong>${listHtml(warnings)}</div>`);
+  if (showIssues && hardBlock) boxes.push(`<div class="issue-box error"><strong>3D 불가 — 원인</strong>${listHtml(errors)}</div>`);
+  if (showIssues && warnItems.length) boxes.push(`<div class="issue-box warn"><strong>주의</strong>${listHtml(warnItems)}</div>`);
   alert.hidden = boxes.length === 0;
   alert.innerHTML = boxes.join("");
-  const ready = readyFor3d();
   if ($("to-3d")) {
     $("to-3d").disabled = !ready;
-    $("to-3d").title = ready ? "이 배치로 3D 모델을 만듭니다." : `3D 불가: ${errors.join(" / ")}`;
+    $("to-3d").title = ready
+      ? "이 배치로 3D 모델을 만듭니다."
+      : `3D 불가: ${(errors.length ? errors : ["평면·주차칸·램프·코어를 확인하세요."]).join(" / ")}`;
   }
   $("show-conflicts").classList.toggle("on", state.debugColumns);
 

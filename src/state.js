@@ -12,14 +12,19 @@ import {
   generateVariants,
   intervalsOverlap,
   layoutParking,
+  lowerFloorRamp,
   rampShape,
   referenceCase,
   siteMarginsOf,
+  coreInterior,
+  nudgeCoresClearOfRamps,
+  pickCoreDoorSide,
   spaceCoresForTowers,
   stairCore,
+  stairCoreInterior,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=284";
+} from "./layout.js?v=295";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -86,7 +91,9 @@ export const state = {
   rampForm: "auto",
   lowerRampForm: "auto",
   lowerRampMode: "alternate",
-  entranceMode: "separate",
+  /** 층간 램프 위치 덮어쓰기 { [groundId]: { edge, t, x?, y? } } */
+  lowerRampOverrides: {},
+  entranceMode: "integrated",
   circulation: "ccw",
   entranceWidth: 6,
   rampWidth: 6,
@@ -181,6 +188,7 @@ export function plateFromState() {
     rampForm: state.rampForm || "auto",
     lowerRampForm: state.lowerRampForm || "auto",
     lowerRampMode: state.lowerRampMode || "alternate",
+    lowerRampOverrides: { ...(state.lowerRampOverrides || {}) },
     legalStalls: rules.legalStalls,
     stallRules: rules,
   };
@@ -279,6 +287,7 @@ export function syncPlateMeta() {
     rampForm: state.rampForm || "auto",
     lowerRampForm: state.lowerRampForm || "auto",
     lowerRampMode: state.lowerRampMode || "alternate",
+    lowerRampOverrides: { ...(state.lowerRampOverrides || {}) },
     roadEdge: state.roadEdge || "w",
     rampPos: state.rampPos || "auto",
   };
@@ -291,21 +300,34 @@ export function issueGroups() {
   let hasNetworkIssue = false;
   for (const issue of state.issues || []) {
     const label = issue.label || issue.message || String(issue.type || issue);
-    if (issue.type === "notice" || issue.type === "warn" || issue.type === "roadless") {
+    // 대지·겹침·안내: 3D 보기는 가능 — 경고로만 표시
+    if (
+      issue.type === "notice"
+      || issue.type === "warn"
+      || issue.type === "roadless"
+      || issue.type === "site"
+      || issue.type === "overlap"
+      || issue.type === "slope"
+    ) {
       warnings.push(label);
       continue;
     }
     if (issue.type === "column") hasColumnIssue = true;
-    if (issue.type === "opening" || issue.type === "ramp" || issue.type === "network") hasNetworkIssue = true;
+    // 동선·램프·출입 이슈는 3D를 막지 않음 — 경고로만
+    if (issue.type === "opening" || issue.type === "ramp" || issue.type === "network" || issue.type === "road") {
+      hasNetworkIssue = true;
+      warnings.push(label);
+      continue;
+    }
     errors.push(label);
   }
   // metrics.columnHits는 이미 type:"column" 이슈로 들어가므로 중복 문구를 넣지 않는다.
   if (!hasColumnIssue && state.metrics && state.metrics.columnHits > 0) {
-    errors.push(`기둥이 주차칸과 ${state.metrics.columnHits}곳 겹칩니다.`);
+    warnings.push(`기둥이 주차칸과 ${state.metrics.columnHits}곳 겹칩니다.`);
   }
-  // state.connected는 metrics.valid(대지 밖 포함)라서, 실제 차로 끊김일 때만 동선 문구를 붙인다.
+  // 동선 끊김은 3D 보기를 막지 않고 경고로 둔다(readyFor3d는 칸·램프·코어만 본다).
   if (hasNetworkIssue || (state.metrics && state.metrics.connected === false)) {
-    errors.push("차로가 하나로 이어지지 않거나 배치가 유효하지 않습니다.");
+    warnings.push("차로가 하나로 이어지지 않거나 배치에 주의가 필요합니다.");
   }
   return { errors, warnings };
 }
@@ -468,9 +490,39 @@ export function optimizeLayout({ refresh = true } = {}) {
   if (refresh) refreshVariants();
 }
 
+/** 셸에서도 코어 내부(승강기·계단) 미리보기를 붙인다. */
+function attachCoreInteriorsPreview() {
+  const aisles = state.aisles || [];
+  const blocks = state.plate?.blockRects || [];
+  state.cores = (state.cores || []).map((core) => {
+    const doorSide = pickCoreDoorSide(core, aisles, blocks);
+    const interior = core.kind === "stair"
+      ? stairCoreInterior(core, doorSide)
+      : coreInterior(core, doorSide);
+    return { ...core, doorSide, interior };
+  });
+}
+
+/** 셸 단계에서 코어가 램프 점유·동선을 막지 않게 밀어, 사면 차로 자리를 남긴다. */
+function clearCoresFromRamps() {
+  if (!state.plate || !(state.ramps && state.ramps.length) || !(state.cores && state.cores.length)) return;
+  const buildings = state.siteType === "complex" ? state.buildings : null;
+  state.cores = nudgeCoresClearOfRamps(state.cores, state.ramps, state.plate, buildings);
+  if (state.siteType === "complex" && state.buildings.length) {
+    const stairs = state.cores.filter((c) => c.kind === "stair");
+    const spaced = spaceCoresForTowers(state.cores, state.buildings, state.plate);
+    state.cores = spaced.filter((c) => (c.kind || "building") !== "stair").concat(stairs);
+    state.cores = nudgeCoresClearOfRamps(state.cores, state.ramps, state.plate, state.buildings);
+    state.plate.blockRects = towerBlockRects(state.buildings, state.cores, state.plate);
+  }
+  attachCoreInteriorsPreview();
+  syncCore();
+}
+
 export function rebuildLayout() {
-  // 5·6 셸(주차 미생성)에서는 위치만 바꾸고, 배치는 6→7 recommendLayouts에서
+  // 5·6 셸(주차 미생성)에서는 배치는 돌리지 않고, 코어·램프 겹침만 정리
   if (!(state.stalls && state.stalls.length) && !(state.variants && state.variants.length)) {
+    clearCoresFromRamps();
     return;
   }
   // 호환: 단일 배치 대신 최적 재탐색
@@ -603,6 +655,8 @@ export function preparePlateShell(opts = {}) {
     if (rampNote) notes.push(rampNote);
   }
   seedAccess();
+  // 램프 점유와 겹치는 코어를 밀어 동선이 막히지 않게 한다(면에 접하도록).
+  clearCoresFromRamps();
   state.referenceNotes = notes;
   state.step = 2;
   state.revealStage = 6;
@@ -711,21 +765,13 @@ export function setStep(step) {
 }
 
 export function readyFor3d() {
-  const columnBlocked = state.issues.some((issue) => issue.type === "column")
-    || (state.metrics && state.metrics.columnHits > 0);
-  // 내부·일체형 램프는 openings가 비어도 램프 자체가 출입. metrics.valid(겹침·경사 등)와
-  // 동선 연결(metrics.connected)을 구분해, 대지만 살짝 넘친 경우에도 모델을 볼 수 있게 한다.
+  // 동선·램프 경고가 있어도 평면·칸·램프만 있으면 3D를 볼 수 있게 한다(경고는 UI에 남김).
   const hasAccess = (state.openings && state.openings.length > 0) || (state.ramps && state.ramps.length > 0);
-  const networkOk = state.metrics
-    ? state.metrics.connected !== false
-    : Boolean(state.connected);
   return Boolean(
     state.plate
     && state.cores.length
     && hasAccess
     && state.ramps.length
-    && networkOk
-    && !columnBlocked
     && (state.stalls?.length > 0),
   );
 }
@@ -1074,6 +1120,7 @@ export function placeRamp(edge, t) {
 }
 
 export function moveRamp(id, edge, t) {
+  pinLowerRampOverrides();
   const index = state.ramps.findIndex((item) => item.id === id);
   if (index < 0) return;
   // 사슬 램프(이미 모듈 편집됨)는 예전 edge 끌기가 아니라 시작점 평행 이동으로 바꾼다(프롬프트 4).
@@ -1105,10 +1152,64 @@ export function moveRamp(id, edge, t) {
   emit();
 }
 
+/**
+ * 출입 램프를 바꾸기 전에 현재 층간 위치를 고정한다.
+ * (덮어쓰기가 없으면 파생 위치를 스냅샷 → 이후 출입 변경에 끌려가지 않음)
+ */
+export function pinLowerRampOverrides() {
+  if (!state.plate || !(state.ramps && state.ramps.length)) return;
+  const mode = state.lowerRampMode || "alternate";
+  const form = state.lowerRampForm || "auto";
+  const plate = {
+    ...state.plate,
+    lowerRampForm: form,
+    lowerRampMode: mode,
+    lowerRampOverrides: state.lowerRampOverrides || {},
+  };
+  const next = { ...(state.lowerRampOverrides || {}) };
+  for (const g of state.ramps) {
+    if (next[g.id] || next[String(g.id)]) continue;
+    const low = lowerFloorRamp(g, plate, mode, form, null);
+    if (!low) continue;
+    next[g.id] = {
+      edge: low.edge,
+      t: low.t,
+      placement: low.placement || "internal",
+    };
+  }
+  state.lowerRampOverrides = next;
+}
+
+/** 층간 램프(B2↓) 위치 덮어쓰기 — 출입과 독립 조정. */
+export function moveLowerRamp(groundId, edge, t, { live = false } = {}) {
+  if (!state.plate) return;
+  const along = edge === "n" || edge === "s" ? state.plate.width : state.plate.depth;
+  const nextT = Math.max(3, Math.min(along - 3, Number(t) || along / 2));
+  state.lowerRampOverrides = {
+    ...(state.lowerRampOverrides || {}),
+    [groundId]: {
+      ...(state.lowerRampOverrides?.[groundId] || {}),
+      edge,
+      t: round1(nextT),
+    },
+  };
+  state.selection = { type: "lowerRamp", id: groundId };
+  syncPlateMeta();
+  if (live) emit();
+  else {
+    rebuildLayout();
+    emit();
+  }
+}
+
 /** 사슬 시작점 평행 이동(0.5m 맞춤). live면 배치 엔진은 돌리지 않고 화면만 갱신.
  *  건축선~이격 사이(대지 여유)까지 허용. 외곽 회전이 밖으로 나가면 외부형으로 맞춘다.
  */
 export function moveRampFree(id, x, y, { live = false } = {}) {
+  if (!live) pinLowerRampOverrides();
+  else if (!(state.lowerRampOverrides && Object.keys(state.lowerRampOverrides).length)) {
+    pinLowerRampOverrides();
+  }
   const index = state.ramps.findIndex((item) => item.id === id);
   if (index < 0 || !state.plate) return;
   let cur = ensureModules(state.ramps[index], state.plate);
