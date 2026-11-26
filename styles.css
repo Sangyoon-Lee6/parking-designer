@@ -148,6 +148,7 @@ body.step-result .shell {
   position: relative;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   padding: 14px 10px 14px 14px;
 }
 
@@ -184,15 +185,26 @@ body.step-result #scene-view {
 }
 
 #plan-view {
+  /* toolbar | compare-dock | canvas — canvas는 항상 3행(1fr)에 고정.
+     compare-dock이 display:none이면 그리드 항목이 빠지며 canvas가 auto 행으로
+     올라가 높이 ~150px만 쓰이던 문제를 막는다. */
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   cursor: pointer;
 }
 
-body.plan-expanded #plan-view {
+body.plan-expanded #plan-view,
+body[data-wizard="5"] #plan-view,
+body[data-wizard="6"] #plan-view,
+body[data-wizard="7"] #plan-view,
+body[data-wizard="8"] #plan-view {
   cursor: default;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  /* 램프·코어·추천·결과: 좌측 스테이지를 세로로 꽉 채움 */
+  inset: 12px;
 }
+
+#plan-view .toolbar { grid-row: 1; grid-column: 1; }
 
 body:not(.plan-expanded):not(.step-result) #plan-view .toolbar-actions,
 body:not(.plan-expanded):not(.step-result) #compare-dock,
@@ -246,6 +258,8 @@ body:not(.plan-expanded):not(.step-result) #plan-view {
 }
 
 #compare-dock {
+  grid-row: 2;
+  grid-column: 1;
   display: flex;
   flex-wrap: nowrap;
   gap: 8px;
@@ -294,12 +308,17 @@ body:not(.plan-expanded):not(.step-result) #plan-view {
 #readout { font-variant-numeric: tabular-nums; color: var(--ink); }
 
 #plan {
+  grid-row: 3;
+  grid-column: 1;
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
   display: block;
+  touch-action: none;
+  cursor: crosshair;
+  background: #f8fafc;
 }
-
-#plan { touch-action: none; cursor: crosshair; background: #f8fafc; }
 
 #scene-view:not([hidden]) {
   display: flex;
@@ -572,9 +591,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
    canvas 고유 크기가 flex/grid min-size를 키우면 좌측으로 밀리므로
    표시 크기는 JS(fitSheetCanvas) + aspect-ratio로 맞춘다. */
 #sheet-view:not([hidden]) {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   z-index: 3;
   background: #e8eef4;
   overflow: auto;
@@ -582,12 +600,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   box-sizing: border-box;
 }
 #sheet {
-  flex: none;
   display: block;
-  margin: auto;
-  /* 표시 크기(width/height)는 fitSheetCanvas가 A3 비율로 지정 */
+  margin: 0;
+  /* canvas 비트맵(1580×1040)이 flex/grid min-size를 키워 좌상단으로 밀리지 않게 */
+  min-width: 0;
+  min-height: 0;
   max-width: 100%;
   max-height: 100%;
+  width: auto;
+  height: auto;
+  aspect-ratio: 1580 / 1040;
   background: #fff;
   object-fit: contain;
   box-shadow: var(--shadow);

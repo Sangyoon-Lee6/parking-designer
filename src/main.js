@@ -1,19 +1,19 @@
-import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=292";
+import { CLEAR_HEIGHT, SLAB_T, clearHeightOf, requiredClearHeight, minStraightRampLength, rampPositionCheck, rampShape, rampTransitions, recommendCoreCells, stallsPerBay } from "./layout.js?v=293";
 import { housingAreaDivisor, uses, zoneFactors, zoneUseStatus } from "./parkingRules.js?v=282";
-import { drawThumb, mountPlan } from "./plan.js?v=292";
+import { drawThumb, invalidatePlanFit, mountPlan } from "./plan.js?v=293";
 import { stallRuleTargets } from "./stallTypes.js?v=282";
 import {
   plateDimsFromPolygon, presetChamferRect, presetL, presetTrapezoid, presetU,
   rectPolygon, validatePolygon, normalizePolygon, offsetPolygon, polygonArea, edgeLengths,
 } from "./polygon.js?v=282";
 import { eumLandUrl, lookupZoning, lookupZoningAt, parcelAt, regionFromAddress, roadAccess } from "./zoning.js?v=282";
-import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, pinLowerRampOverrides, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState } from "./state.js?v=292";
+import { addBuilding, addCore, addStairCore, applyVariant, autoPlaceCore, buildingOfCore, clearParkPolygon, coreLabel, currentStallRules, demandResult, editRampModules, emit, generatePlate, loadReference, optimizeLayout, parseSpans, placeOverlapExample, placeSplitExample, pinLowerRampOverrides, preparePlateShell, readyFor3d, issueGroups, rampFallback, rampModuleInfo, recommendLayouts, removeBuilding, removeSelection, rotateSelectedRamp, selectCore, selectItem, selectedOpening, selectedRamp, setParkPolygon, setReveal, setSiteType, setStep, setTool, state, subscribe, summary, syncPlateMeta, updateBuilding, updateCore, updateCoreArea, updateEntranceWidth, updateRampSize, updateSiteMargins, plateFromState, rebuildLayout } from "./state.js?v=293";
 
 // 시트·DXF·주변지도는 클릭 시에만 불러 초기 로딩을 줄인다.
 let sheetMod = null;
 let dxfMod = null;
 let contextMod = null;
-const loadSheet = () => (sheetMod ||= import("./sheet.js?v=282"));
+const loadSheet = () => (sheetMod ||= import("./sheet.js?v=293"));
 const loadDxf = () => (dxfMod ||= import("./dxfExport.js?v=282"));
 const loadContext = () => (contextMod ||= import("./context.js?v=282"));
 async function closeContext() {
@@ -236,8 +236,12 @@ function refreshRampFormsOnly() {
   syncPlateMeta();
   if (state.stalls?.length || state.variants?.length) {
     optimizeLayout({ refresh: false });
+  } else {
+    // 셸: 코어가 새 램프 경로를 막지 않게 정리
+    rebuildLayout();
   }
   emit();
+  requestAnimationFrame(() => invalidatePlanFit());
 }
 $("ramp-form").addEventListener("change", () => {
   // 출입 형태를 바꿔도 층간 위치가 따라가지 않도록 먼저 고정
@@ -883,7 +887,7 @@ function playBuild() {
 
 async function ensureScene() {
   if (!sceneMount) {
-    sceneMount = import("./scene.js?v=292")
+    sceneMount = import("./scene.js?v=293")
       .then((module) => {
         const root = $("scene-root");
         if (!root) throw new Error("scene-root 없음");
@@ -1115,6 +1119,10 @@ function render() {
   document.body.dataset.wizard = String(wizardSlide);
   document.body.classList.toggle("plan-expanded", wizardSlide >= 5);
   document.body.classList.toggle("step-result", step === 3);
+  // 좌측 스테이지가 넓어진 뒤 평면도 카메라를 다시 가운데로
+  if (wizardSlide >= 5) {
+    requestAnimationFrame(() => requestAnimationFrame(() => invalidatePlanFit()));
+  }
   document.querySelectorAll("#wizard-steps li").forEach((item) => {
     const value = Number(item.dataset.slide);
     item.classList.toggle("on", value === wizardSlide);

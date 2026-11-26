@@ -1,4 +1,4 @@
-import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=292";
+import { edgePoint, pickEdge, rampFootprint, rampShape, rampsForLevel, siteMarginsOf } from "./layout.js?v=293";
 import {
   analyzeOnPlate, buildChain, slopePlan, usesModuleLayout,
 } from "./rampModules.js?v=282";
@@ -8,7 +8,7 @@ import {
 import {
   emit, moveLowerRamp, moveOpening, moveRamp, moveRampFree, placeOpening, placeRamp,
   selectCore, selectItem, setParkPolygon, state, subscribe, updateCore,
-} from "./state.js?v=292";
+} from "./state.js?v=293";
 
 const camera = { x: 0, y: 0, scale: 12 };
 let fittedKey = "";
@@ -562,8 +562,17 @@ export function mountPlan(canvas) {
 
   const observer = new ResizeObserver(resize);
   observer.observe(canvas);
+  // 스테이지(plan-view) 크기 변화도 잡아 램프 단계 확장 직후 맞춤이 빠지지 않게 한다.
+  const host = canvas.parentElement;
+  if (host) observer.observe(host);
   subscribe(draw);
   resize();
+}
+
+/** 다음 그리기에서 카메라 맞춤을 다시 계산한다(마법사 확장·탭 전환 후). */
+export function invalidatePlanFit() {
+  fittedKey = "";
+  requestDraw();
 }
 
 function viewBounds() {

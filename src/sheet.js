@@ -415,8 +415,12 @@ export function fitSheetCanvas(canvas) {
   const availW = Math.max(80, parent.clientWidth - pad);
   const availH = Math.max(80, parent.clientHeight - pad);
   const scale = Math.min(availW / 1580, availH / 1040, 1);
-  canvas.style.width = `${Math.round(1580 * scale)}px`;
-  canvas.style.height = `${Math.round(1040 * scale)}px`;
+  const w = Math.max(1, Math.round(1580 * scale));
+  const h = Math.max(1, Math.round(1040 * scale));
+  canvas.style.width = `${w}px`;
+  canvas.style.height = `${h}px`;
+  canvas.style.maxWidth = "100%";
+  canvas.style.maxHeight = "100%";
 }
 
 export function drawSheet(canvas, state, info, floorIndex) {

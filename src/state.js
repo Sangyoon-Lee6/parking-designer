@@ -16,11 +16,12 @@ import {
   rampShape,
   referenceCase,
   siteMarginsOf,
+  nudgeCoresClearOfRamps,
   spaceCoresForTowers,
   stairCore,
   towerBlockRects,
   towerTransferNotes,
-} from "./layout.js?v=292";
+} from "./layout.js?v=293";
 import {
   addModule as chainAddModule,
   applyPlateMeta,
@@ -486,9 +487,24 @@ export function optimizeLayout({ refresh = true } = {}) {
   if (refresh) refreshVariants();
 }
 
+/** 셸 단계에서 코어가 램프 점유·동선을 막지 않게 밀어 면에 접게 한다. */
+function clearCoresFromRamps() {
+  if (!state.plate || !(state.ramps && state.ramps.length) || !(state.cores && state.cores.length)) return;
+  state.cores = nudgeCoresClearOfRamps(state.cores, state.ramps, state.plate);
+  if (state.siteType === "complex" && state.buildings.length) {
+    const stairs = state.cores.filter((c) => c.kind === "stair");
+    const spaced = spaceCoresForTowers(state.cores, state.buildings, state.plate);
+    state.cores = spaced.filter((c) => (c.kind || "building") !== "stair").concat(stairs);
+    state.cores = nudgeCoresClearOfRamps(state.cores, state.ramps, state.plate);
+    state.plate.blockRects = towerBlockRects(state.buildings, state.cores, state.plate);
+  }
+  syncCore();
+}
+
 export function rebuildLayout() {
-  // 5·6 셸(주차 미생성)에서는 위치만 바꾸고, 배치는 6→7 recommendLayouts에서
+  // 5·6 셸(주차 미생성)에서는 배치는 돌리지 않고, 코어·램프 겹침만 정리
   if (!(state.stalls && state.stalls.length) && !(state.variants && state.variants.length)) {
+    clearCoresFromRamps();
     return;
   }
   // 호환: 단일 배치 대신 최적 재탐색
@@ -621,6 +637,8 @@ export function preparePlateShell(opts = {}) {
     if (rampNote) notes.push(rampNote);
   }
   seedAccess();
+  // 램프 점유와 겹치는 코어를 밀어 동선이 막히지 않게 한다(면에 접하도록).
+  clearCoresFromRamps();
   state.referenceNotes = notes;
   state.step = 2;
   state.revealStage = 6;
